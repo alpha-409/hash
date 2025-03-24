@@ -2,6 +2,7 @@ import numpy as np
 from tqdm import tqdm
 import torch
 from sklearn.metrics import average_precision_score
+from functools import lru_cache
 
 def compute_hamming_distance(hash1, hash2):
     """
@@ -9,20 +10,45 @@ def compute_hamming_distance(hash1, hash2):
     """
     return np.sum(hash1 != hash2)
 
-def compute_distances(query_hashes, db_hashes):
+def compute_distances(query_hashes, db_hashes, distance_func=None):
     """
     计算查询哈希与数据库哈希之间的距离
+    
+    参数:
+        query_hashes: 查询哈希列表
+        db_hashes: 数据库哈希列表
+        distance_func: 距离计算函数，默认为None（使用汉明距离）
     """
-    distances = []
-    for q_hash in query_hashes:
-        q_distances = []
-        for db_hash in db_hashes:
-            dist = compute_hamming_distance(q_hash, db_hash)
-            q_distances.append(dist)
-        distances.append(q_distances)
-    return np.array(distances)
+    # 将哈希值转换为numpy数组以加速计算
+    query_hashes = np.array(query_hashes)
+    db_hashes = np.array(db_hashes)
+    
+    # 使用向量化操作计算距离
+    distances = np.zeros((len(query_hashes), len(db_hashes)))
+    
+    # 批量计算距离以提高效率
+    batch_size = 50  # 可以根据内存大小调整
+    for i in range(0, len(query_hashes), batch_size):
+        end_i = min(i + batch_size, len(query_hashes))
+        q_batch = query_hashes[i:end_i]
+        
+        for j in range(0, len(db_hashes), batch_size):
+            end_j = min(j + batch_size, len(db_hashes))
+            db_batch = db_hashes[j:end_j]
+            
+            # 计算当前批次的距离矩阵
+            for k, q in enumerate(q_batch):
+                for l, db in enumerate(db_batch):
+                    if distance_func is None:
+                        # 默认使用汉明距离
+                        distances[i+k, j+l] = compute_hamming_distance(q, db)
+                    else:
+                        # 使用自定义距离函数
+                        distances[i+k, j+l] = distance_func(q, db)
+    
+    return distances
 
-def evaluate_hash(hash_func, data, hash_size=8):
+def evaluate_hash(hash_func, data, hash_size=8, distance_func=None, is_deep_feature=False):
     """
     评估哈希算法在数据集上的性能
     
@@ -30,6 +56,8 @@ def evaluate_hash(hash_func, data, hash_size=8):
         hash_func: 哈希函数
         data: 数据集字典
         hash_size: 哈希大小
+        distance_func: 距离计算函数，默认为None（使用汉明距离）
+        is_deep_feature: 是否是深度特征（而非二进制哈希）
         
     返回:
         mAP和μAP
@@ -43,22 +71,37 @@ def evaluate_hash(hash_func, data, hash_size=8):
         print("警告: 数据集为空!")
         return 0.0, 0.0
     
-    # 计算查询图像的哈希
-    query_hashes = []
-    for img in tqdm(query_images, desc="计算查询哈希"):
-        hash_value = hash_func(img, hash_size)
-        query_hashes.append(hash_value)
+    # 使用GPU加速（如果可用）
+    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    if isinstance(query_images, torch.Tensor):
+        query_images = query_images.to(device)
+    if isinstance(db_images, torch.Tensor):
+        db_images = db_images.to(device)
     
-    # 计算数据库图像的哈希
-    db_hashes = []
-    for img in tqdm(db_images, desc="计算数据库哈希"):
-        hash_value = hash_func(img, hash_size)
-        db_hashes.append(hash_value)
+    # 计算查询图像的哈希或特征
+    query_features = []
+    for img in tqdm(query_images, desc="计算查询特征"):
+        if is_deep_feature:
+            feature = hash_func(img)
+        else:
+            feature = hash_func(img, hash_size)
+        query_features.append(feature)
+    
+    # 计算数据库图像的哈希或特征
+    db_features = []
+    for img in tqdm(db_images, desc="计算数据库特征"):
+        if is_deep_feature:
+            feature = hash_func(img)
+        else:
+            feature = hash_func(img, hash_size)
+        db_features.append(feature)
     
     # 计算距离
-    distances = compute_distances(query_hashes, db_hashes)
+    print("计算特征距离...")
+    distances = compute_distances(query_features, db_features, distance_func)
     
     # 计算AP和mAP
+    print("计算评估指标...")
     aps = []
     for q_idx in range(len(query_images)):
         # 获取真实正样本

@@ -8,6 +8,7 @@ from image_hash import (
     average_hash, perceptual_hash, difference_hash, 
     wavelet_hash, color_hash, marr_hildreth_hash
 )
+from resnet_detection import resnet_hash, resnet_deep, compute_resnet_deep_distance
 from evaluate import evaluate_hash
 
 def main():
@@ -15,6 +16,9 @@ def main():
     parser.add_argument('--data_dir', type=str, default='./data', help='数据目录')
     parser.add_argument('--hash_size', type=int, default=8, help='哈希大小')
     parser.add_argument('--output_dir', type=str, default='./results', help='结果输出目录')
+    parser.add_argument('--algorithms', type=str, nargs='+', 
+                        default=['all'], 
+                        help='要评估的算法，可选: aHash, pHash, dHash, wHash, cHash, mhHash, resnet-hash, resnet-deep, all')
     args = parser.parse_args()
     
     # 确保输出目录存在
@@ -27,29 +31,47 @@ def main():
     data = load_data('copydays', args.data_dir)
     
     # 定义要评估的哈希算法
-    hash_algorithms = {
-        'Average Hash (aHash)': average_hash,
-        'Perceptual Hash (pHash)': perceptual_hash,
-        'Difference Hash (dHash)': difference_hash,
-        'Wavelet Hash (wHash)': wavelet_hash,
-        'Color Hash (cHash)': color_hash,
-        'Marr-Hildreth Hash (mhHash)': marr_hildreth_hash
+    all_hash_algorithms = {
+        'aHash': {'name': 'Average Hash (aHash)', 'func': average_hash, 'is_deep': False, 'distance_func': None},
+        'pHash': {'name': 'Perceptual Hash (pHash)', 'func': perceptual_hash, 'is_deep': False, 'distance_func': None},
+        'dHash': {'name': 'Difference Hash (dHash)', 'func': difference_hash, 'is_deep': False, 'distance_func': None},
+        'wHash': {'name': 'Wavelet Hash (wHash)', 'func': wavelet_hash, 'is_deep': False, 'distance_func': None},
+        'cHash': {'name': 'Color Hash (cHash)', 'func': color_hash, 'is_deep': False, 'distance_func': None},
+        'mhHash': {'name': 'Marr-Hildreth Hash (mhHash)', 'func': marr_hildreth_hash, 'is_deep': False, 'distance_func': None},
+        'resnet-hash': {'name': 'ResNet50 Hash', 'func': resnet_hash, 'is_deep': False, 'distance_func': None},
+        'resnet-deep': {'name': 'ResNet50 Deep Features', 'func': resnet_deep, 'is_deep': True, 'distance_func': compute_resnet_deep_distance}
     }
+    
+    # 选择要评估的算法
+    hash_algorithms = {}
+    if 'all' in args.algorithms:
+        hash_algorithms = {k: v for k, v in all_hash_algorithms.items()}
+    else:
+        for algo in args.algorithms:
+            if algo in all_hash_algorithms:
+                hash_algorithms[algo] = all_hash_algorithms[algo]
+            else:
+                print(f"警告: 未知算法 '{algo}'，将被跳过")
     
     # 评估每个哈希算法
     results = {}
-    for name, hash_func in hash_algorithms.items():
+    for key, algo_info in hash_algorithms.items():
+        name = algo_info['name']
+        hash_func = algo_info['func']
+        is_deep = algo_info['is_deep']
+        distance_func = algo_info['distance_func']
+        
         print(f"\n评估 {name}...")
-        mAP, μAP = evaluate_hash(hash_func, data, args.hash_size)
+        mAP, μAP = evaluate_hash(hash_func, data, args.hash_size, distance_func, is_deep)
         results[name] = {'mAP': mAP, 'μAP': μAP}
         print(f"{name} - mAP: {mAP:.4f}, μAP: {μAP:.4f}")
     
     # 打印汇总结果
     print("\n===== 结果汇总 =====")
-    print(f"{'算法':<25} {'mAP':<10} {'μAP':<10}")
-    print("-" * 45)
+    print(f"{'算法':<30} {'mAP':<10} {'μAP':<10}")
+    print("-" * 50)
     for name, metrics in results.items():
-        print(f"{name:<25} {metrics['mAP']:<10.4f} {metrics['μAP']:<10.4f}")
+        print(f"{name:<30} {metrics['mAP']:<10.4f} {metrics['μAP']:<10.4f}")
     
     # 将结果保存到CSV文件
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
