@@ -9,6 +9,7 @@ from image_hash import (
     wavelet_hash, color_hash, marr_hildreth_hash
 )
 from resnet_detection import resnet_hash, resnet_deep, compute_resnet_deep_distance
+from multiscale_detection import multiscale_hash, multiscale_deep, compute_multiscale_distance
 from evaluate import evaluate_hash
 
 def main():
@@ -18,7 +19,10 @@ def main():
     parser.add_argument('--output_dir', type=str, default='./results', help='结果输出目录')
     parser.add_argument('--algorithms', type=str, nargs='+', 
                         default=['all'], 
-                        help='要评估的算法，可选: aHash, pHash, dHash, wHash, cHash, mhHash, resnet-hash, resnet-deep, all')
+                        help='要评估的算法，可选: aHash, pHash, dHash, wHash, cHash, mhHash, resnet-hash, resnet-deep, multiscale-hash, multiscale-deep, all')
+    parser.add_argument('--scales', type=float, nargs='+', 
+                        default=[1.0, 0.75, 0.5], 
+                        help='多尺度特征提取的缩放比例')
     args = parser.parse_args()
     
     # 确保输出目录存在
@@ -39,7 +43,9 @@ def main():
         'cHash': {'name': 'Color Hash (cHash)', 'func': color_hash, 'is_deep': False, 'distance_func': None},
         'mhHash': {'name': 'Marr-Hildreth Hash (mhHash)', 'func': marr_hildreth_hash, 'is_deep': False, 'distance_func': None},
         'resnet-hash': {'name': 'ResNet50 Hash', 'func': resnet_hash, 'is_deep': False, 'distance_func': None},
-        'resnet-deep': {'name': 'ResNet50 Deep Features', 'func': resnet_deep, 'is_deep': True, 'distance_func': compute_resnet_deep_distance}
+        'resnet-deep': {'name': 'ResNet50 Deep Features', 'func': resnet_deep, 'is_deep': True, 'distance_func': compute_resnet_deep_distance},
+        'multiscale-hash': {'name': 'Multiscale ResNet50 Hash', 'func': multiscale_hash, 'is_deep': False, 'distance_func': None},
+        'multiscale-deep': {'name': 'Multiscale ResNet50 Deep Features', 'func': multiscale_deep, 'is_deep': True, 'distance_func': compute_multiscale_distance}
     }
     
     # 选择要评估的算法
@@ -68,17 +74,17 @@ def main():
     
     # 打印汇总结果
     print("\n===== 结果汇总 =====")
-    print(f"{'算法':<30} {'mAP':<10} {'μAP':<10}")
-    print("-" * 50)
+    print(f"{'算法':<40} {'mAP':<10} {'μAP':<10}")
+    print("-" * 60)
     for name, metrics in results.items():
-        print(f"{name:<30} {metrics['mAP']:<10.4f} {metrics['μAP']:<10.4f}")
+        print(f"{name:<40} {metrics['mAP']:<10.4f} {metrics['μAP']:<10.4f}")
     
     # 将结果保存到CSV文件
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     csv_filename = os.path.join(args.output_dir, f"hash_evaluation_results_{timestamp}.csv")
     
     with open(csv_filename, 'w', newline='', encoding='utf-8') as csvfile:
-        fieldnames = ['算法', 'mAP', 'μAP', '哈希大小', '时间戳']
+        fieldnames = ['算法', 'mAP', 'μAP', '哈希大小', '时间戳', '缩放比例']
         writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
         
         writer.writeheader()
@@ -88,7 +94,8 @@ def main():
                 'mAP': f"{metrics['mAP']:.6f}",
                 'μAP': f"{metrics['μAP']:.6f}",
                 '哈希大小': args.hash_size,
-                '时间戳': timestamp
+                '时间戳': timestamp,
+                '缩放比例': str(args.scales) if 'multiscale' in name.lower() else 'N/A'
             })
     
     print(f"\n结果已保存到: {csv_filename}")
@@ -98,7 +105,7 @@ def main():
     file_exists = os.path.isfile(summary_csv)
     
     with open(summary_csv, 'a', newline='', encoding='utf-8') as csvfile:
-        fieldnames = ['算法', 'mAP', 'μAP', '哈希大小', '时间戳']
+        fieldnames = ['算法', 'mAP', 'μAP', '哈希大小', '时间戳', '缩放比例']
         writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
         
         if not file_exists:
@@ -110,7 +117,8 @@ def main():
                 'mAP': f"{metrics['mAP']:.6f}",
                 'μAP': f"{metrics['μAP']:.6f}",
                 '哈希大小': args.hash_size,
-                '时间戳': timestamp
+                '时间戳': timestamp,
+                '缩放比例': str(args.scales) if 'multiscale' in name.lower() else 'N/A'
             })
     
     print(f"结果已追加到汇总文件: {summary_csv}")
