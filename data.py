@@ -296,8 +296,8 @@ def load_copydays_dataset(base_dir: str, preprocess: bool = True,
                包含所有必要的数据用于后续的拷贝检测实验
     """
     # 确保使用正确的路径分隔符
-    jpg_dir = os.path.join(base_dir, 'copydays', 'jpg')
-    pkl_path = os.path.join(base_dir, 'copydays', 'gnd_copydays.pkl')
+    jpg_dir = os.path.join(base_dir, 'data', 'copydays', 'jpg')
+    pkl_path = os.path.join(base_dir, 'data', 'copydays', 'gnd_copydays.pkl')
     
     # 验证必要文件的存在
     if not os.path.exists(jpg_dir) or not os.path.exists(pkl_path):
