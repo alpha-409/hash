@@ -155,7 +155,7 @@ class ITQHashGenerator:
         # 应用旋转矩阵
         Z = np.dot(V, self.rotation)
         
-        # 二值化
+        # 二值化 - 使用0作为阈值而不是中值
         B = np.sign(Z)
         B[B <= 0] = 0  # 将-1转换为0
         B = B.astype(bool)
@@ -166,22 +166,28 @@ class ITQHashGenerator:
         
         return B
 
-def itq_hash(img, hash_size=8, n_bits=64):
+def itq_hash(img, hash_size=8, n_bits=None):
     """
     使用ITQ方法生成图像哈希
     
     参数:
         img: 输入图像
-        hash_size: 哈希大小（仅用于兼容接口，实际使用n_bits）
-        n_bits: 哈希位数
+        hash_size: 哈希大小（如果n_bits为None，则使用hash_size^2作为哈希位数）
+        n_bits: 哈希位数，如果指定则优先使用
         
     返回:
         二进制哈希值
     """
+    # 如果n_bits未指定，则使用hash_size的平方
+    if n_bits is None:
+        n_bits = hash_size * hash_size
+    
     # 创建或获取哈希生成器
     if not hasattr(itq_hash, 'generator'):
-        # 将n_components设置为64，确保不超过样本数量
-        itq_hash.generator = ITQHashGenerator(n_components=64, n_bits=n_bits)
+        # 使用ViT作为基础模型
+        n_components = min(128, n_bits)
+        itq_hash.generator = ITQHashGenerator(n_components=n_components, n_bits=n_bits, 
+                                             n_iterations=100, base_model="vit")
         itq_hash.is_fitted = False
     
     # 提取特征
@@ -191,7 +197,7 @@ def itq_hash(img, hash_size=8, n_bits=64):
     if not itq_hash.is_fitted:
         if not hasattr(itq_hash, 'feature_samples'):
             itq_hash.feature_samples = [features]
-        elif len(itq_hash.feature_samples) < 100:  # 收集足够的样本
+        elif len(itq_hash.feature_samples) < 200:  # 增加样本数量到200
             itq_hash.feature_samples.append(features)
         else:
             # 有足够样本时拟合ITQ
