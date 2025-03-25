@@ -16,12 +16,20 @@ class ContrastiveFeatureExtractor:
         """
         # 加载基础模型
         if model_name == "resnet50":
-            base_model = models.resnet50(pretrained=pretrained)
+            # 使用weights参数替代pretrained参数
+            if pretrained:
+                base_model = models.resnet50(weights=models.ResNet50_Weights.IMAGENET1K_V1)
+            else:
+                base_model = models.resnet50(weights=None)
             # 移除最后的全连接层
             self.encoder = nn.Sequential(*list(base_model.children())[:-1])
             self.feature_dim = 2048
         elif model_name == "resnet18":
-            base_model = models.resnet18(pretrained=pretrained)
+            # 使用weights参数替代pretrained参数
+            if pretrained:
+                base_model = models.resnet18(weights=models.ResNet18_Weights.IMAGENET1K_V1)
+            else:
+                base_model = models.resnet18(weights=None)
             self.encoder = nn.Sequential(*list(base_model.children())[:-1])
             self.feature_dim = 512
         else:

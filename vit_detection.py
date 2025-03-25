@@ -3,24 +3,46 @@ import torch.nn as nn
 from torchvision import models, transforms
 import numpy as np
 from PIL import Image
-from transformers import ViTFeatureExtractor, ViTModel
 
-class ViTFeatureExtractorWrapper:
-    def __init__(self, model_name="google/vit-base-patch16-224"):
+class ViTFeatureExtractor:
+    def __init__(self, model_name="vit_b_16"):
         """
-        初始化ViT特征提取器
+        初始化ViT特征提取器，使用torchvision模型
         
         参数:
-            model_name (str): 预训练ViT模型名称
+            model_name (str): 模型名称，可选: vit_b_16, vit_b_32, vit_l_16, vit_l_32
         """
-        # 加载预训练的ViT模型和特征提取器
-        self.feature_extractor = ViTFeatureExtractor.from_pretrained(model_name)
-        self.model = ViTModel.from_pretrained(model_name)
+        # 加载预训练的ViT模型
+        if model_name == "vit_b_16":
+            self.model = models.vit_b_16(weights=models.ViT_B_16_Weights.IMAGENET1K_V1)
+        elif model_name == "vit_b_32":
+            self.model = models.vit_b_32(weights=models.ViT_B_32_Weights.IMAGENET1K_V1)
+        elif model_name == "vit_l_16":
+            self.model = models.vit_l_16(weights=models.ViT_L_16_Weights.IMAGENET1K_V1)
+        elif model_name == "vit_l_32":
+            self.model = models.vit_l_32(weights=models.ViT_L_32_Weights.IMAGENET1K_V1)
+        else:
+            raise ValueError(f"不支持的模型名称: {model_name}")
+        
+        # 移除分类头，只保留特征提取部分
+        self.feature_dim = self.model.hidden_dim
+        self.model.heads = nn.Identity()
+        
+        # 设置为评估模式
         self.model.eval()
         
         # 移动到GPU（如果可用）
         self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
         self.model = self.model.to(self.device)
+        
+        # 图像预处理
+        self.preprocess = transforms.Compose([
+            transforms.Resize(224),
+            transforms.CenterCrop(224),
+            transforms.ToTensor(),
+            transforms.Normalize(mean=[0.485, 0.456, 0.406], 
+                                std=[0.229, 0.224, 0.225])
+        ])
     
     def extract_features(self, img):
         """
@@ -32,27 +54,23 @@ class ViTFeatureExtractorWrapper:
         返回:
             特征向量
         """
-        # 如果输入是张量，转换为PIL图像
-        if isinstance(img, torch.Tensor):
-            if img.dim() == 4:  # 批次形式
-                img = img[0]  # 取第一个样本
-            # 转换为PIL图像
-            img = transforms.ToPILImage()(img.cpu())
+        # 如果输入是PIL图像，进行预处理
+        if isinstance(img, Image.Image):
+            img = self.preprocess(img)
         
-        # 确保输入是PIL图像
-        if not isinstance(img, Image.Image):
-            raise TypeError("输入必须是PIL图像或张量")
+        # 如果输入是张量但不是批次形式，添加批次维度
+        if isinstance(img, torch.Tensor) and img.dim() == 3:
+            img = img.unsqueeze(0)
         
-        # 使用ViT特征提取器预处理图像
-        inputs = self.feature_extractor(images=img, return_tensors="pt")
-        inputs = {k: v.to(self.device) for k, v in inputs.items()}
+        # 移动到相应设备
+        img = img.to(self.device)
         
         # 前向传播
         with torch.no_grad():
-            outputs = self.model(**inputs)
+            features = self.model(img)
         
-        # 获取[CLS]令牌的输出作为图像表示
-        features = outputs.last_hidden_state[:, 0].cpu().numpy()
+        # 转换为NumPy数组
+        features = features.cpu().numpy()
         
         # 如果是批次，只返回第一个样本的特征
         if features.shape[0] == 1:
@@ -76,15 +94,35 @@ def vit_hash(img, hash_size=8):
     """
     # 创建特征提取器（如果尚未创建）
     if not hasattr(vit_hash, 'extractor'):
-        vit_hash.extractor = ViTFeatureExtractorWrapper()
+        vit_hash.extractor = ViTFeatureExtractor()
     
     # 提取特征
     features = vit_hash.extractor.extract_features(img)
     
-    # 如果需要，可以使用PCA或其他方法降维到指定的hash_size
-    # 这里简单地取前hash_size*hash_size个元素
-    if hash_size * hash_size < len(features):
-        features = features[:hash_size * hash_size]
+    # 使用PCA降维而不是简单截断
+    if hasattr(vit_hash, 'pca') and vit_hash.pca.n_components == hash_size * hash_size:
+        reduced_features = vit_hash.pca.transform(features.reshape(1, -1))[0]
+    else:
+        # 首次运行时初始化PCA
+        from sklearn.decomposition import PCA
+        # 收集一些样本用于PCA拟合
+        if not hasattr(vit_hash, 'feature_samples'):
+            vit_hash.feature_samples = [features]
+            # 简单截断
+            if hash_size * hash_size < len(features):
+                features = features[:hash_size * hash_size]
+        elif len(vit_hash.feature_samples) < 100:  # 收集足够的样本
+            vit_hash.feature_samples.append(features)
+            # 简单截断
+            if hash_size * hash_size < len(features):
+                features = features[:hash_size * hash_size]
+        else:
+            # 有足够样本时拟合PCA
+            sample_matrix = np.vstack(vit_hash.feature_samples)
+            vit_hash.pca = PCA(n_components=hash_size * hash_size)
+            vit_hash.pca.fit(sample_matrix)
+            reduced_features = vit_hash.pca.transform(features.reshape(1, -1))[0]
+            features = reduced_features
     
     # 计算特征的中值
     median_value = np.median(features)
@@ -107,7 +145,7 @@ def vit_deep(img, feature_dim=None):
     """
     # 创建特征提取器（如果尚未创建）
     if not hasattr(vit_deep, 'extractor'):
-        vit_deep.extractor = ViTFeatureExtractorWrapper()
+        vit_deep.extractor = ViTFeatureExtractor()
     
     # 提取特征
     features = vit_deep.extractor.extract_features(img)

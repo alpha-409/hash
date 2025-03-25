@@ -14,7 +14,7 @@ class ResNetFeatureExtractor:
             layer (str): 提取特征的层，默认为'avgpool'
         """
         # 加载预训练的ResNet50模型
-        self.model = models.resnet50(pretrained=True)
+        self.model = models.resnet50(weights=models.ResNet50_Weights.IMAGENET1K_V1)
         self.model.eval()
         
         # 移动到GPU（如果可用）

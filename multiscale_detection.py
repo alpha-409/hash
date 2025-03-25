@@ -14,7 +14,8 @@ class MultiscaleFeatureExtractor:
             scales (list): 图像缩放比例列表
         """
         # 加载预训练的ResNet50模型
-        self.model = models.resnet50(pretrained=True)
+        # 将 models.resnet50(pretrained=True) 替换为:
+        self.model = models.resnet50(weights=models.ResNet50_Weights.IMAGENET1K_V1)
         self.model.eval()
         
         # 移动到GPU（如果可用）
