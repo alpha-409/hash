@@ -53,21 +53,36 @@ class VisualSalientHashSystem:
 
     def _build_salient_tensor(self, features):
         """构建显著性特征张量"""
-        # 生成显著性图 [1, 1, 7, 7]
+        # 生成显著性图 [B, 1, H, W]
         saliency_map = self.saliency_layer(features)
         
-        # 特征加权 [1, 2048, 7, 7]
+        # 特征加权 [B, C, H, W]
         weighted_features = features * saliency_map
         
-        # 构造3D张量 [空间位置×通道×显著性]
-        return torch.einsum('bchw,bhw->bhwc', 
-                          weighted_features, 
-                          saliency_map.squeeze())
+        # 处理批次大小为1的情况
+        if weighted_features.size(0) == 1:
+            # 移除批次维度 [1, C, H, W] -> [C, H, W]
+            weighted_features = weighted_features.squeeze(0)
+            
+            # 构造3D张量 [H, W, C]
+            tensor = weighted_features.permute(1, 2, 0)
+        else:
+            # 批量处理情况 - 取第一个样本
+            weighted_features = weighted_features[0]
+            
+            # 构造3D张量 [H, W, C]
+            tensor = weighted_features.permute(1, 2, 0)
+        
+        # 可选：应用额外的归一化
+        # tensor = tensor / (tensor.norm(dim=-1, keepdim=True) + 1e-8)
+        
+        return tensor
 
     def _tensor_decomposition(self, tensor):
         """执行张量分解生成哈希"""
         # Tucker分解
-        core, _ = tucker(tensor, ranks=self.rank)
+        # 修正参数名称：从 ranks 改为 rank
+        core, _ = tucker(tensor, rank=self.rank)
         
         # 核心张量处理
         core_vector = core.flatten()
@@ -76,14 +91,22 @@ class VisualSalientHashSystem:
 
     def _extract_deep_features(self, tensor):
         """提取深度特征向量"""
+        # 确保张量是3D的 [H, W, C]
+        if tensor.dim() == 4:  # [B, H, W, C]
+            tensor = tensor[0]  # 取第一个样本
+            
         # 张量标准化
-        norm_tensor = tensor / torch.norm(tensor, p=2, dim=(1,2,3), keepdim=True)
+        norm_tensor = tensor / (torch.norm(tensor, p=2) + 1e-8)
         return norm_tensor.flatten().cpu().numpy()
 
     def process_image(self, img):
         """统一图像处理流程"""
         if isinstance(img, Image.Image):
-            img = self.preprocess(img).unsqueeze(0)
+            img = self.preprocess(img).unsqueeze(0)  # 确保添加批次维度
+        elif torch.is_tensor(img):
+            # 如果已经是张量，确保有批次维度
+            if img.dim() == 3:  # [C, H, W] -> [1, C, H, W]
+                img = img.unsqueeze(0)
         return img.to(self.device)
 
 # ================= 兼容接口 =================
@@ -93,6 +116,11 @@ def visual_salient_hash(img, hash_size=64):
         visual_salient_hash.system = VisualSalientHashSystem(hash_size)
     
     img_tensor = visual_salient_hash.system.process_image(img)
+    
+    # 确保输入是4D张量
+    if img_tensor.dim() == 3:
+        img_tensor = img_tensor.unsqueeze(0)
+        
     with torch.no_grad():
         features = visual_salient_hash.system.base_model(img_tensor)
         tensor = visual_salient_hash.system._build_salient_tensor(features)
@@ -104,6 +132,11 @@ def visual_salient_deep(img, feature_dim=512):
         visual_salient_deep.system = VisualSalientHashSystem()
     
     img_tensor = visual_salient_deep.system.process_image(img)
+    
+    # 确保输入是4D张量
+    if img_tensor.dim() == 3:
+        img_tensor = img_tensor.unsqueeze(0)
+        
     with torch.no_grad():
         features = visual_salient_deep.system.base_model(img_tensor)
         tensor = visual_salient_deep.system._build_salient_tensor(features)
