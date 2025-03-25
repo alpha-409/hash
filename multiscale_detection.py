@@ -169,3 +169,53 @@ def compute_multiscale_distance(feature1, feature2):
     # 转换为距离（值越小表示越相似）
     distance = 1.0 - similarity
     return distance
+
+
+def extract_multiscale_features(img, scales=[0.75, 1.0, 1.25]):
+    """
+    提取多尺度特征
+    
+    参数:
+        img: 输入图像
+        scales: 尺度列表
+        
+    返回:
+        多尺度特征向量
+    """
+    # 创建特征提取器（如果尚未创建）
+    if not hasattr(extract_multiscale_features, 'extractor'):
+        extract_multiscale_features.extractor = ResNetFeatureExtractor()
+    
+    # 提取多尺度特征
+    all_features = []
+    for scale in scales:
+        # 调整图像大小
+        if scale != 1.0:
+            if isinstance(img, Image.Image):
+                w, h = img.size
+                new_w, new_h = int(w * scale), int(h * scale)
+                scaled_img = img.resize((new_w, new_h), Image.LANCZOS)
+            else:
+                # 假设是张量
+                scaled_img = F.interpolate(img.unsqueeze(0), scale_factor=scale, mode='bilinear', align_corners=False).squeeze(0)
+        else:
+            scaled_img = img
+        
+        # 提取特征
+        features = extract_multiscale_features.extractor.extract_features(scaled_img)
+        
+        # 归一化特征
+        features = features / (np.linalg.norm(features) + 1e-8)
+        
+        all_features.append(features)
+    
+    # 加权融合特征 - 给中心尺度(1.0)更高的权重
+    weights = [0.25, 0.5, 0.25] if len(scales) == 3 else [1.0/len(scales)] * len(scales)
+    combined_features = np.zeros_like(all_features[0])
+    for i, feat in enumerate(all_features):
+        combined_features += weights[i] * feat
+    
+    # 再次归一化
+    combined_features = combined_features / (np.linalg.norm(combined_features) + 1e-8)
+    
+    return combined_features
