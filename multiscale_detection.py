@@ -184,6 +184,7 @@ def extract_multiscale_features(img, scales=[0.75, 1.0, 1.25]):
     """
     # 创建特征提取器（如果尚未创建）
     if not hasattr(extract_multiscale_features, 'extractor'):
+        from resnet_detection import ResNetFeatureExtractor
         extract_multiscale_features.extractor = ResNetFeatureExtractor()
     
     # 提取多尺度特征
@@ -197,6 +198,7 @@ def extract_multiscale_features(img, scales=[0.75, 1.0, 1.25]):
                 scaled_img = img.resize((new_w, new_h), Image.LANCZOS)
             else:
                 # 假设是张量
+                import torch.nn.functional as F
                 scaled_img = F.interpolate(img.unsqueeze(0), scale_factor=scale, mode='bilinear', align_corners=False).squeeze(0)
         else:
             scaled_img = img
