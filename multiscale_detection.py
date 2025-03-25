@@ -270,7 +270,7 @@ def dualscale_deep(img, feature_dim=None):
     
     return features
 
-# 多尺度特征提取器（使用注意力机制融合特征）
+# 多尺度特征提取器（ 使用注意力机制融合特征）
 class MultiscaleFeatureExtractor:
     def __init__(self, scales=[0.75, 1.0, 1.25], base_model="resnet50"):
         """
