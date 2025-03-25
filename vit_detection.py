@@ -99,30 +99,10 @@ def vit_hash(img, hash_size=8):
     # 提取特征
     features = vit_hash.extractor.extract_features(img)
     
-    # 使用PCA降维而不是简单截断
-    if hasattr(vit_hash, 'pca') and vit_hash.pca.n_components == hash_size * hash_size:
-        reduced_features = vit_hash.pca.transform(features.reshape(1, -1))[0]
-    else:
-        # 首次运行时初始化PCA
-        from sklearn.decomposition import PCA
-        # 收集一些样本用于PCA拟合
-        if not hasattr(vit_hash, 'feature_samples'):
-            vit_hash.feature_samples = [features]
-            # 简单截断
-            if hash_size * hash_size < len(features):
-                features = features[:hash_size * hash_size]
-        elif len(vit_hash.feature_samples) < 100:  # 收集足够的样本
-            vit_hash.feature_samples.append(features)
-            # 简单截断
-            if hash_size * hash_size < len(features):
-                features = features[:hash_size * hash_size]
-        else:
-            # 有足够样本时拟合PCA
-            sample_matrix = np.vstack(vit_hash.feature_samples)
-            vit_hash.pca = PCA(n_components=hash_size * hash_size)
-            vit_hash.pca.fit(sample_matrix)
-            reduced_features = vit_hash.pca.transform(features.reshape(1, -1))[0]
-            features = reduced_features
+    # 如果需要，可以使用PCA或其他方法降维到指定的hash_size
+    # 这里简单地取前hash_size*hash_size个元素
+    if hash_size * hash_size < len(features):
+        features = features[:hash_size * hash_size]
     
     # 计算特征的中值
     median_value = np.median(features)
