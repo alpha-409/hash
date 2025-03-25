@@ -163,6 +163,15 @@ class ITQHashGenerator:
         # 如果只有一个样本，返回一维数组
         if B.shape[0] == 1:
             B = B.squeeze(0)
+            # 确保返回的哈希码长度为n_bits
+            if len(B) != self.n_bits:
+                if len(B) < self.n_bits:
+                    # 填充
+                    padding = np.zeros(self.n_bits - len(B), dtype=bool)
+                    B = np.concatenate([B, padding])
+                else:
+                    # 截断
+                    B = B[:self.n_bits]
         
         return B
 
@@ -183,12 +192,16 @@ def itq_hash(img, hash_size=8, n_bits=None):
         n_bits = hash_size * hash_size
     
     # 创建或获取哈希生成器
-    if not hasattr(itq_hash, 'generator'):
+    if not hasattr(itq_hash, 'generator') or itq_hash.n_bits != n_bits:
         # 使用ViT作为基础模型
         n_components = min(128, n_bits)
         itq_hash.generator = ITQHashGenerator(n_components=n_components, n_bits=n_bits, 
                                              n_iterations=100, base_model="vit")
         itq_hash.is_fitted = False
+        itq_hash.n_bits = n_bits
+        # 清除之前收集的样本
+        if hasattr(itq_hash, 'feature_samples'):
+            del itq_hash.feature_samples
     
     # 提取特征
     features = itq_hash.generator.extract_features(img)
@@ -210,9 +223,27 @@ def itq_hash(img, hash_size=8, n_bits=None):
         hash_value = itq_hash.generator.generate_hash(features)
     else:
         # 未拟合时使用简单的二值化作为临时方案
-        if hash_size * hash_size < len(features):
-            features = features[:hash_size * hash_size]
-        hash_value = features > np.median(features)
+        # 确保哈希长度一致
+        temp_features = features.copy()
+        if len(temp_features) < n_bits:
+            # 如果特征维度小于所需哈希位数，通过重复填充
+            repeats = int(np.ceil(n_bits / len(temp_features)))
+            temp_features = np.tile(temp_features, repeats)
+        # 截取所需长度
+        temp_features = temp_features[:n_bits]
+        hash_value = temp_features > np.median(temp_features)
+    
+    # 确保返回的哈希码长度为n_bits
+    if len(hash_value) != n_bits:
+        print(f"警告: 哈希码长度 {len(hash_value)} 与预期的 {n_bits} 不符")
+        # 如果长度不符，调整长度
+        if len(hash_value) < n_bits:
+            # 填充
+            padding = np.zeros(n_bits - len(hash_value), dtype=bool)
+            hash_value = np.concatenate([hash_value, padding])
+        else:
+            # 截断
+            hash_value = hash_value[:n_bits]
     
     return hash_value
 
