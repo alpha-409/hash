@@ -14,6 +14,7 @@ from vit_detection import vit_hash, vit_deep, compute_vit_distance
 from contrastive_detection import contrastive_hash, contrastive_deep, compute_contrastive_distance
 from itq_hash import itq_hash, itq_deep, compute_itq_distance  # 添加ITQ哈希方法
 from evaluate import evaluate_hash
+from saliency_tensor_hash import saliency_tensor_hash, compute_saliency_tensor_distance
 
 def main():
     parser = argparse.ArgumentParser(description='评估图像哈希算法')
@@ -66,7 +67,8 @@ def main():
         'contrastive-hash': {'name': 'Contrastive Learning Hash', 'func': contrastive_hash, 'is_deep': False, 'distance_func': None},
         'contrastive-deep': {'name': 'Contrastive Learning Deep Features', 'func': contrastive_deep, 'is_deep': True, 'distance_func': compute_contrastive_distance},
         'itq-hash': {'name': 'ITQ Hash', 'func': itq_hash, 'is_deep': False, 'distance_func': None},
-        'itq-deep': {'name': 'ITQ Deep Features', 'func': itq_deep, 'is_deep': True, 'distance_func': compute_itq_distance}
+        'itq-deep': {'name': 'ITQ Deep Features', 'func': itq_deep, 'is_deep': True, 'distance_func': compute_itq_distance},
+        'saliency-tensor-hash': {'name': '显著性张量哈希', 'func': saliency_tensor_hash, 'is_deep': False, 'distance_func': compute_saliency_tensor_distance},
     }
     
     # 选择要评估的算法
