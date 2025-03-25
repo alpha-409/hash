@@ -15,6 +15,8 @@ from contrastive_detection import contrastive_hash, contrastive_deep, compute_co
 from itq_hash import itq_hash, itq_deep, compute_itq_distance  # 添加ITQ哈希方法
 from evaluate import evaluate_hash
 from saliency_tensor_hash import saliency_tensor_hash, compute_saliency_tensor_distance
+# 导入新的视觉显著性哈希算法
+from visual_salient_hash import visual_salient_hash, visual_salient_deep, compute_visual_salient_deep_distance
 
 def main():
     parser = argparse.ArgumentParser(description='评估图像哈希算法')
@@ -23,7 +25,7 @@ def main():
     parser.add_argument('--output_dir', type=str, default='./results', help='结果输出目录')
     parser.add_argument('--algorithms', type=str, nargs='+', 
                         default=['all'], 
-                        help='要评估的算法，可选: aHash, pHash, dHash, wHash, cHash, mhHash, resnet-hash, resnet-deep, multiscale-hash, multiscale-deep, vit-hash, vit-deep, contrastive-hash, contrastive-deep, all')
+                        help='要评估的算法，可选: aHash, pHash, dHash, wHash, cHash, mhHash, resnet-hash, resnet-deep, multiscale-hash, multiscale-deep, vit-hash, vit-deep, contrastive-hash, contrastive-deep, visual-salient-hash, visual-salient-deep, all')
     parser.add_argument('--scales', type=float, nargs='+', 
                         default=[1.0, 0.75, 0.5], 
                         help='多尺度特征提取的缩放比例')
@@ -69,6 +71,9 @@ def main():
         'itq-hash': {'name': 'ITQ Hash', 'func': itq_hash, 'is_deep': False, 'distance_func': None},
         'itq-deep': {'name': 'ITQ Deep Features', 'func': itq_deep, 'is_deep': True, 'distance_func': compute_itq_distance},
         'saliency-tensor-hash': {'name': '显著性张量哈希', 'func': saliency_tensor_hash, 'is_deep': False, 'distance_func': compute_saliency_tensor_distance},
+        # 添加新的视觉显著性哈希算法
+        'visual-salient-hash': {'name': '视觉显著性哈希', 'func': visual_salient_hash, 'is_deep': False, 'distance_func': None},
+        'visual-salient-deep': {'name': '视觉显著性深度特征', 'func': visual_salient_deep, 'is_deep': True, 'distance_func': compute_visual_salient_deep_distance},
     }
     
     # 选择要评估的算法
