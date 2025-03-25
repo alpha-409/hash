@@ -5,16 +5,15 @@ import numpy as np
 from PIL import Image
 import torch.nn.functional as F
 
-class MultiscaleFeatureExtractor:
-    def __init__(self, scales=[0.75, 1.0, 1.25], base_model="resnet50"):
+class SingleScaleFeatureExtractor:
+    """单尺度特征提取器，与ResNetFeatureExtractor类似但更简洁"""
+    def __init__(self, base_model="resnet50"):
         """
-        初始化多尺度特征提取器
+        初始化单尺度特征提取器
         
         参数:
-            scales (list): 图像缩放比例列表
             base_model (str): 基础模型，支持"resnet50"和"vit"
         """
-        self.scales = scales
         self.base_model = base_model
         
         # 加载预训练模型
@@ -84,29 +83,209 @@ class MultiscaleFeatureExtractor:
         if features.shape[0] == 1:
             features = features.squeeze(0)
         
+        # 归一化特征
+        features = features / (np.linalg.norm(features) + 1e-8)
+        
         return features
+
+class DualScaleFeatureExtractor:
+    """双尺度特征提取器，结合原始尺度和一个额外尺度"""
+    def __init__(self, scale=0.75, base_model="resnet50"):
+        """
+        初始化双尺度特征提取器
+        
+        参数:
+            scale (float): 第二个尺度的缩放比例
+            base_model (str): 基础模型，支持"resnet50"和"vit"
+        """
+        self.scale = scale
+        self.base_extractor = SingleScaleFeatureExtractor(base_model=base_model)
     
-    def extract_multiscale_features(self, img):
+    def extract_features(self, img):
+        """
+        从图像中提取双尺度特征
+        
+        参数:
+            img: PIL图像
+            
+        返回:
+            双尺度特征向量
+        """
+        # 确保输入是PIL图像
+        if not isinstance(img, Image.Image):
+            if isinstance(img, torch.Tensor):
+                if img.dim() == 4:
+                    img = img[0]
+                img = transforms.ToPILImage()(img.cpu())
+        
+        # 提取原始尺度特征
+        original_features = self.base_extractor.extract_features(img)
+        
+        # 调整图像大小并提取第二个尺度的特征
+        w, h = img.size
+        new_w, new_h = int(w * self.scale), int(h * self.scale)
+        scaled_img = img.resize((new_w, new_h), Image.LANCZOS)
+        scaled_features = self.base_extractor.extract_features(scaled_img)
+        
+        # 加权融合特征 (原始尺度权重更高)
+        combined_features = 0.7 * original_features + 0.3 * scaled_features
+        
+        # 再次归一化
+        combined_features = combined_features / (np.linalg.norm(combined_features) + 1e-8)
+        
+        return combined_features
+
+# 单尺度哈希函数
+def singlescale_hash(img, hash_size=8):
+    """
+    使用单尺度特征提取并生成哈希
+    
+    参数:
+        img: 输入图像
+        hash_size: 哈希大小
+        
+    返回:
+        二进制哈希值
+    """
+    # 创建特征提取器（如果尚未创建）
+    if not hasattr(singlescale_hash, 'extractor'):
+        singlescale_hash.extractor = SingleScaleFeatureExtractor(base_model="resnet50")
+    
+    # 提取特征
+    features = singlescale_hash.extractor.extract_features(img)
+    
+    # 如果需要，可以使用PCA或其他方法降维到指定的hash_size
+    # 这里简单地取前hash_size*hash_size个元素
+    if hash_size * hash_size < len(features):
+        features = features[:hash_size * hash_size]
+    elif hash_size * hash_size > len(features):
+        # 如果特征维度小于所需哈希位数，通过重复填充
+        repeats = int(np.ceil((hash_size * hash_size) / len(features)))
+        features = np.tile(features, repeats)[:hash_size * hash_size]
+    
+    # 使用自适应阈值生成二进制哈希
+    threshold = np.median(features)
+    hash_value = features > threshold
+    
+    return hash_value
+
+# 单尺度深度特征函数
+def singlescale_deep(img, feature_dim=None):
+    """
+    使用单尺度特征提取用于相似度计算
+    
+    参数:
+        img: 输入图像
+        feature_dim: 特征维度，默认为None（使用完整特征）
+        
+    返回:
+        特征向量
+    """
+    # 创建特征提取器（如果尚未创建）
+    if not hasattr(singlescale_deep, 'extractor'):
+        singlescale_deep.extractor = SingleScaleFeatureExtractor(base_model="resnet50")
+    
+    # 提取特征
+    features = singlescale_deep.extractor.extract_features(img)
+    
+    # 如果指定了特征维度，截取前feature_dim个元素
+    if feature_dim is not None and feature_dim < len(features):
+        features = features[:feature_dim]
+    
+    return features
+
+# 双尺度哈希函数
+def dualscale_hash(img, hash_size=8):
+    """
+    使用双尺度特征提取并生成哈希
+    
+    参数:
+        img: 输入图像
+        hash_size: 哈希大小
+        
+    返回:
+        二进制哈希值
+    """
+    # 创建特征提取器（如果尚未创建）
+    if not hasattr(dualscale_hash, 'extractor'):
+        dualscale_hash.extractor = DualScaleFeatureExtractor(scale=0.75, base_model="resnet50")
+    
+    # 提取双尺度特征
+    features = dualscale_hash.extractor.extract_features(img)
+    
+    # 如果需要，可以使用PCA或其他方法降维到指定的hash_size
+    # 这里简单地取前hash_size*hash_size个元素
+    if hash_size * hash_size < len(features):
+        features = features[:hash_size * hash_size]
+    elif hash_size * hash_size > len(features):
+        # 如果特征维度小于所需哈希位数，通过重复填充
+        repeats = int(np.ceil((hash_size * hash_size) / len(features)))
+        features = np.tile(features, repeats)[:hash_size * hash_size]
+    
+    # 使用自适应阈值生成二进制哈希
+    threshold = np.median(features)
+    hash_value = features > threshold
+    
+    return hash_value
+
+# 双尺度深度特征函数
+def dualscale_deep(img, feature_dim=None):
+    """
+    使用双尺度特征提取用于相似度计算
+    
+    参数:
+        img: 输入图像
+        feature_dim: 特征维度，默认为None（使用完整特征）
+        
+    返回:
+        特征向量
+    """
+    # 创建特征提取器（如果尚未创建）
+    if not hasattr(dualscale_deep, 'extractor'):
+        dualscale_deep.extractor = DualScaleFeatureExtractor(scale=0.75, base_model="resnet50")
+    
+    # 提取双尺度特征
+    features = dualscale_deep.extractor.extract_features(img)
+    
+    # 如果指定了特征维度，截取前feature_dim个元素
+    if feature_dim is not None and feature_dim < len(features):
+        features = features[:feature_dim]
+    
+    return features
+
+# 多尺度特征提取器（保留原有实现，但使用新的单尺度提取器）
+class MultiscaleFeatureExtractor:
+    def __init__(self, scales=[0.5, 0.75, 1.0, 1.25, 1.5], base_model="resnet50"):
+        """
+        初始化多尺度特征提取器
+        
+        参数:
+            scales (list): 图像缩放比例列表
+            base_model (str): 基础模型，支持"resnet50"和"vit"
+        """
+        self.scales = scales
+        self.base_extractor = SingleScaleFeatureExtractor(base_model=base_model)
+    
+    def extract_features(self, img):
         """
         从图像中提取多尺度特征
         
         参数:
-            img: PIL图像或张量
+            img: PIL图像
             
         返回:
             多尺度特征向量
         """
-        all_features = []
-        
-        # 如果输入是张量，转换为PIL图像以便于缩放
-        if isinstance(img, torch.Tensor):
-            if img.dim() == 4:  # 批次形式
-                img = img[0]  # 取第一个样本
-            # 转换为PIL图像
-            img = transforms.ToPILImage()(img.cpu())
+        # 确保输入是PIL图像
+        if not isinstance(img, Image.Image):
+            if isinstance(img, torch.Tensor):
+                if img.dim() == 4:
+                    img = img[0]
+                img = transforms.ToPILImage()(img.cpu())
         
         # 对每个尺度提取特征
-        for i, scale in enumerate(self.scales):
+        all_features = []
+        for scale in self.scales:
             # 调整图像大小
             if scale != 1.0:
                 w, h = img.size
@@ -116,18 +295,13 @@ class MultiscaleFeatureExtractor:
                 scaled_img = img
             
             # 提取特征
-            features = self.extract_features(scaled_img)
-            
-            # 归一化特征
-            features = features / (np.linalg.norm(features) + 1e-8)
-            
+            features = self.base_extractor.extract_features(scaled_img)
             all_features.append(features)
         
         # 加权融合特征 - 给中心尺度(1.0)更高的权重
         center_idx = self.scales.index(1.0) if 1.0 in self.scales else len(self.scales) // 2
-        weights = np.ones(len(self.scales)) * 0.15
+        weights = np.ones(len(self.scales)) * (1.0 - 0.7) / (len(self.scales) - 1)
         weights[center_idx] = 0.7  # 给中心尺度更高的权重
-        weights = weights / weights.sum()  # 归一化权重
         
         # 应用权重
         combined_features = np.zeros_like(all_features[0])
@@ -139,6 +313,7 @@ class MultiscaleFeatureExtractor:
         
         return combined_features
 
+# 多尺度哈希函数（保留原有实现，但使用新的多尺度提取器）
 def multiscale_hash(img, hash_size=8):
     """
     使用多尺度特征提取并生成哈希
@@ -152,14 +327,13 @@ def multiscale_hash(img, hash_size=8):
     """
     # 创建特征提取器（如果尚未创建）
     if not hasattr(multiscale_hash, 'extractor'):
-        # 使用ViT作为基础模型，性能更好
         multiscale_hash.extractor = MultiscaleFeatureExtractor(
             scales=[0.75, 1.0, 1.25], 
-            base_model="vit"
+            base_model="resnet50"
         )
     
     # 提取多尺度特征
-    features = multiscale_hash.extractor.extract_multiscale_features(img)
+    features = multiscale_hash.extractor.extract_features(img)
     
     # 如果需要，可以使用PCA或其他方法降维到指定的hash_size
     # 这里简单地取前hash_size*hash_size个元素
@@ -171,12 +345,12 @@ def multiscale_hash(img, hash_size=8):
         features = np.tile(features, repeats)[:hash_size * hash_size]
     
     # 使用自适应阈值生成二进制哈希
-    # 计算特征的中值作为阈值
     threshold = np.median(features)
     hash_value = features > threshold
     
     return hash_value
 
+# 多尺度深度特征函数（保留原有实现，但使用新的多尺度提取器）
 def multiscale_deep(img, feature_dim=None):
     """
     使用多尺度特征提取用于相似度计算
@@ -190,14 +364,13 @@ def multiscale_deep(img, feature_dim=None):
     """
     # 创建特征提取器（如果尚未创建）
     if not hasattr(multiscale_deep, 'extractor'):
-        # 使用ViT作为基础模型，性能更好
         multiscale_deep.extractor = MultiscaleFeatureExtractor(
             scales=[0.75, 1.0, 1.25], 
-            base_model="vit"
+            base_model="resnet50"
         )
     
     # 提取多尺度特征
-    features = multiscale_deep.extractor.extract_multiscale_features(img)
+    features = multiscale_deep.extractor.extract_features(img)
     
     # 如果指定了特征维度，截取前feature_dim个元素
     if feature_dim is not None and feature_dim < len(features):
@@ -205,9 +378,10 @@ def multiscale_deep(img, feature_dim=None):
     
     return features
 
+# 计算特征距离的函数（适用于所有尺度）
 def compute_multiscale_distance(feature1, feature2):
     """
-    计算两个多尺度特征向量之间的距离
+    计算两个特征向量之间的距离
     
     参数:
         feature1, feature2: 特征向量
@@ -242,4 +416,4 @@ def extract_multiscale_features(img, scales=[0.75, 1.0, 1.25]):
         extract_multiscale_features.extractor = MultiscaleFeatureExtractor(scales=scales)
     
     # 使用新的实现提取多尺度特征
-    return extract_multiscale_features.extractor.extract_multiscale_features(img)
+    return extract_multiscale_features.extractor.extract_features(img)

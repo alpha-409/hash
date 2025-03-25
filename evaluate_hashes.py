@@ -38,6 +38,14 @@ def main():
     data = load_data('copydays', args.data_dir)
     
     # 定义要评估的哈希算法
+    # 在导入部分添加新的函数
+    from multiscale_detection import (
+        singlescale_hash, singlescale_deep, 
+        dualscale_hash, dualscale_deep,
+        multiscale_hash, multiscale_deep, compute_multiscale_distance
+    )
+    
+    # 在all_hash_algorithms字典中添加新的算法
     all_hash_algorithms = {
         'aHash': {'name': 'Average Hash (aHash)', 'func': average_hash, 'is_deep': False, 'distance_func': None},
         'pHash': {'name': 'Perceptual Hash (pHash)', 'func': perceptual_hash, 'is_deep': False, 'distance_func': None},
@@ -47,6 +55,10 @@ def main():
         'mhHash': {'name': 'Marr-Hildreth Hash (mhHash)', 'func': marr_hildreth_hash, 'is_deep': False, 'distance_func': None},
         'resnet-hash': {'name': 'ResNet50 Hash', 'func': resnet_hash, 'is_deep': False, 'distance_func': None},
         'resnet-deep': {'name': 'ResNet50 Deep Features', 'func': resnet_deep, 'is_deep': True, 'distance_func': compute_resnet_deep_distance},
+        'singlescale-hash': {'name': 'Single Scale ResNet50 Hash', 'func': singlescale_hash, 'is_deep': False, 'distance_func': None},
+        'singlescale-deep': {'name': 'Single Scale ResNet50 Deep Features', 'func': singlescale_deep, 'is_deep': True, 'distance_func': compute_multiscale_distance},
+        'dualscale-hash': {'name': 'Dual Scale ResNet50 Hash', 'func': dualscale_hash, 'is_deep': False, 'distance_func': None},
+        'dualscale-deep': {'name': 'Dual Scale ResNet50 Deep Features', 'func': dualscale_deep, 'is_deep': True, 'distance_func': compute_multiscale_distance},
         'multiscale-hash': {'name': 'Multiscale ResNet50 Hash', 'func': multiscale_hash, 'is_deep': False, 'distance_func': None},
         'multiscale-deep': {'name': 'Multiscale ResNet50 Deep Features', 'func': multiscale_deep, 'is_deep': True, 'distance_func': compute_multiscale_distance},
         'vit-hash': {'name': 'ViT Hash', 'func': vit_hash, 'is_deep': False, 'distance_func': None},
