@@ -10,6 +10,8 @@ from image_hash import (
 )
 from resnet_detection import resnet_hash, resnet_deep, compute_resnet_deep_distance
 from multiscale_detection import multiscale_hash, multiscale_deep, compute_multiscale_distance
+from vit_detection import vit_hash, vit_deep, compute_vit_distance
+from contrastive_detection import contrastive_hash, contrastive_deep, compute_contrastive_distance
 from evaluate import evaluate_hash
 
 def main():
@@ -19,7 +21,7 @@ def main():
     parser.add_argument('--output_dir', type=str, default='./results', help='结果输出目录')
     parser.add_argument('--algorithms', type=str, nargs='+', 
                         default=['all'], 
-                        help='要评估的算法，可选: aHash, pHash, dHash, wHash, cHash, mhHash, resnet-hash, resnet-deep, multiscale-hash, multiscale-deep, all')
+                        help='要评估的算法，可选: aHash, pHash, dHash, wHash, cHash, mhHash, resnet-hash, resnet-deep, multiscale-hash, multiscale-deep, vit-hash, vit-deep, contrastive-hash, contrastive-deep, all')
     parser.add_argument('--scales', type=float, nargs='+', 
                         default=[1.0, 0.75, 0.5], 
                         help='多尺度特征提取的缩放比例')
@@ -45,7 +47,11 @@ def main():
         'resnet-hash': {'name': 'ResNet50 Hash', 'func': resnet_hash, 'is_deep': False, 'distance_func': None},
         'resnet-deep': {'name': 'ResNet50 Deep Features', 'func': resnet_deep, 'is_deep': True, 'distance_func': compute_resnet_deep_distance},
         'multiscale-hash': {'name': 'Multiscale ResNet50 Hash', 'func': multiscale_hash, 'is_deep': False, 'distance_func': None},
-        'multiscale-deep': {'name': 'Multiscale ResNet50 Deep Features', 'func': multiscale_deep, 'is_deep': True, 'distance_func': compute_multiscale_distance}
+        'multiscale-deep': {'name': 'Multiscale ResNet50 Deep Features', 'func': multiscale_deep, 'is_deep': True, 'distance_func': compute_multiscale_distance},
+        'vit-hash': {'name': 'ViT Hash', 'func': vit_hash, 'is_deep': False, 'distance_func': None},
+        'vit-deep': {'name': 'ViT Deep Features', 'func': vit_deep, 'is_deep': True, 'distance_func': compute_vit_distance},
+        'contrastive-hash': {'name': 'Contrastive Learning Hash', 'func': contrastive_hash, 'is_deep': False, 'distance_func': None},
+        'contrastive-deep': {'name': 'Contrastive Learning Deep Features', 'func': contrastive_deep, 'is_deep': True, 'distance_func': compute_contrastive_distance}
     }
     
     # 选择要评估的算法
