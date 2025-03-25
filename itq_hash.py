@@ -16,7 +16,7 @@ class ITQHashGenerator:
             n_iterations (int): ITQ迭代次数
             base_model (str): 基础特征提取模型
         """
-        self.n_components = n_components
+        self.n_components = min(n_components, n_bits)  # 确保n_components不超过n_bits
         self.n_bits = n_bits
         self.n_iterations = n_iterations
         
@@ -107,6 +107,10 @@ class ITQHashGenerator:
         参数:
             features: 特征矩阵，形状为 (n_samples, feature_dim)
         """
+        # 确保n_components不超过样本数量和特征维度
+        n_samples, n_features = features.shape
+        self.n_components = min(self.n_components, n_samples, n_features)
+        
         # 拟合PCA
         self.pca = PCA(n_components=self.n_components)
         V = self.pca.fit_transform(features)
@@ -176,7 +180,8 @@ def itq_hash(img, hash_size=8, n_bits=64):
     """
     # 创建或获取哈希生成器
     if not hasattr(itq_hash, 'generator'):
-        itq_hash.generator = ITQHashGenerator(n_bits=n_bits)
+        # 将n_components设置为64，确保不超过样本数量
+        itq_hash.generator = ITQHashGenerator(n_components=64, n_bits=n_bits)
         itq_hash.is_fitted = False
     
     # 提取特征
