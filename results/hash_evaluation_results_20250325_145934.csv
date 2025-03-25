@@ -1,0 +1,5 @@
+算法,mAP,μAP,哈希大小,时间戳,缩放比例
+Perceptual Hash (pHash),0.572684,0.569774,16,20250325_145934,N/A
+ResNet50 Deep Features,0.889316,0.847680,16,20250325_145934,N/A
+ViT Deep Features,0.708110,0.581331,16,20250325_145934,N/A
+Contrastive Learning Deep Features,0.855859,0.805462,16,20250325_145934,N/A

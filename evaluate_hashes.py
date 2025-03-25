@@ -12,6 +12,7 @@ from resnet_detection import resnet_hash, resnet_deep, compute_resnet_deep_dista
 from multiscale_detection import multiscale_hash, multiscale_deep, compute_multiscale_distance
 from vit_detection import vit_hash, vit_deep, compute_vit_distance
 from contrastive_detection import contrastive_hash, contrastive_deep, compute_contrastive_distance
+from itq_hash import itq_hash, itq_deep, compute_itq_distance  # 添加ITQ哈希方法
 from evaluate import evaluate_hash
 
 def main():
@@ -51,7 +52,9 @@ def main():
         'vit-hash': {'name': 'ViT Hash', 'func': vit_hash, 'is_deep': False, 'distance_func': None},
         'vit-deep': {'name': 'ViT Deep Features', 'func': vit_deep, 'is_deep': True, 'distance_func': compute_vit_distance},
         'contrastive-hash': {'name': 'Contrastive Learning Hash', 'func': contrastive_hash, 'is_deep': False, 'distance_func': None},
-        'contrastive-deep': {'name': 'Contrastive Learning Deep Features', 'func': contrastive_deep, 'is_deep': True, 'distance_func': compute_contrastive_distance}
+        'contrastive-deep': {'name': 'Contrastive Learning Deep Features', 'func': contrastive_deep, 'is_deep': True, 'distance_func': compute_contrastive_distance},
+        'itq-hash': {'name': 'ITQ Hash', 'func': itq_hash, 'is_deep': False, 'distance_func': None},
+        'itq-deep': {'name': 'ITQ Deep Features', 'func': itq_deep, 'is_deep': True, 'distance_func': compute_itq_distance}
     }
     
     # 选择要评估的算法
