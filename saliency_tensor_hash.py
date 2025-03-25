@@ -80,22 +80,23 @@ class SaliencyModel:
         return saliency_map
 
 
-class LightweightResNet(nn.Module):
-    """轻量级ResNet模型，用于提取图像特征"""
+class ResNet50FeatureExtractor(nn.Module):
+    """ResNet50特征提取器，用于提取图像特征"""
     
     def __init__(self):
-        super(LightweightResNet, self).__init__()
-        # 加载预训练的ResNet18模型
-        resnet = models.resnet18(weights=models.ResNet18_Weights.IMAGENET1K_V1)
+        super(ResNet50FeatureExtractor, self).__init__()
+        # 加载预训练的ResNet50模型
+        resnet = models.resnet50(weights=models.ResNet50_Weights.IMAGENET1K_V1)
         
-        # 只使用前几层
+        # 使用卷积层和部分残差块
         self.features = nn.Sequential(
             resnet.conv1,
             resnet.bn1,
             resnet.relu,
             resnet.maxpool,
             resnet.layer1,
-            resnet.layer2
+            resnet.layer2,
+            resnet.layer3
         )
         
         # 冻结参数
@@ -158,7 +159,7 @@ class SaliencyTensorHash:
         self.saliency_model = SaliencyModel()
         
         # 初始化特征提取模型
-        self.feature_extractor = LightweightResNet()
+        self.feature_extractor = ResNet50FeatureExtractor()
         
     def compute_hash(self, img):
         """
