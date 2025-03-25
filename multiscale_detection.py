@@ -101,10 +101,13 @@ class DualScaleFeatureExtractor:
         self.scale = scale
         self.base_extractor = SingleScaleFeatureExtractor(base_model=base_model)
         
+        # 特征维度
+        self.feature_dim = self.base_extractor.feature_dim
+        
         # 添加PCA降维
-        self.use_pca = True
+        self.use_pca = False  # 默认关闭PCA，避免单样本PCA问题
         self.pca_fitted = False
-        self.pca_dim = 512  # 降维后的维度
+        self.pca_dim = min(512, self.feature_dim)  # 降维后的维度不能超过特征维度
     
     def extract_features(self, img):
         """
@@ -132,25 +135,13 @@ class DualScaleFeatureExtractor:
         scaled_img = img.resize((new_w, new_h), Image.LANCZOS)
         scaled_features = self.base_extractor.extract_features(scaled_img)
         
-        # 特征级联而非加权融合
-        concatenated_features = np.concatenate([original_features, scaled_features])
-        
-        # 使用PCA降维（如果启用）
-        if self.use_pca:
-            if not self.pca_fitted:
-                # 第一次使用时初始化PCA
-                from sklearn.decomposition import PCA
-                self.pca = PCA(n_components=self.pca_dim)
-                self.pca.fit(concatenated_features.reshape(1, -1))
-                self.pca_fitted = True
-            
-            # 应用PCA降维
-            concatenated_features = self.pca.transform(concatenated_features.reshape(1, -1)).flatten()
+        # 使用加权平均而非特征连接
+        combined_features = 0.7 * original_features + 0.3 * scaled_features
         
         # 归一化
-        concatenated_features = concatenated_features / (np.linalg.norm(concatenated_features) + 1e-8)
+        combined_features = combined_features / (np.linalg.norm(combined_features) + 1e-8)
         
-        return concatenated_features
+        return combined_features
 
 # 单尺度哈希函数
 def singlescale_hash(img, hash_size=8):
@@ -290,9 +281,9 @@ class MultiscaleFeatureExtractor:
         self.attention_weights = None
         
         # 是否使用PCA降维
-        self.use_pca = False
+        self.use_pca = False  # 默认关闭PCA
         self.pca_fitted = False
-        self.pca_dim = 512  # 降维后的维度
+        self.pca_dim = min(512, self.feature_dim)  # 降维后的维度不能超过特征维度
     
     def attention_fusion(self, features_list):
         """
