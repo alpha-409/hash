@@ -100,6 +100,11 @@ class DualScaleFeatureExtractor:
         """
         self.scale = scale
         self.base_extractor = SingleScaleFeatureExtractor(base_model=base_model)
+        
+        # 添加PCA降维
+        self.use_pca = True
+        self.pca_fitted = False
+        self.pca_dim = 512  # 降维后的维度
     
     def extract_features(self, img):
         """
@@ -127,13 +132,25 @@ class DualScaleFeatureExtractor:
         scaled_img = img.resize((new_w, new_h), Image.LANCZOS)
         scaled_features = self.base_extractor.extract_features(scaled_img)
         
-        # 加权融合特征 (原始尺度权重更高)
-        combined_features = 0.7 * original_features + 0.3 * scaled_features
+        # 特征级联而非加权融合
+        concatenated_features = np.concatenate([original_features, scaled_features])
         
-        # 再次归一化
-        combined_features = combined_features / (np.linalg.norm(combined_features) + 1e-8)
+        # 使用PCA降维（如果启用）
+        if self.use_pca:
+            if not self.pca_fitted:
+                # 第一次使用时初始化PCA
+                from sklearn.decomposition import PCA
+                self.pca = PCA(n_components=self.pca_dim)
+                self.pca.fit(concatenated_features.reshape(1, -1))
+                self.pca_fitted = True
+            
+            # 应用PCA降维
+            concatenated_features = self.pca.transform(concatenated_features.reshape(1, -1)).flatten()
         
-        return combined_features
+        # 归一化
+        concatenated_features = concatenated_features / (np.linalg.norm(concatenated_features) + 1e-8)
+        
+        return concatenated_features
 
 # 单尺度哈希函数
 def singlescale_hash(img, hash_size=8):
@@ -253,9 +270,9 @@ def dualscale_deep(img, feature_dim=None):
     
     return features
 
-# 多尺度特征提取器（保留原有实现，但使用新的单尺度提取器）
+# 多尺度特征提取器（使用注意力机制融合特征）
 class MultiscaleFeatureExtractor:
-    def __init__(self, scales=[0.5, 0.75, 1.0, 1.25, 1.5], base_model="resnet50"):
+    def __init__(self, scales=[0.75, 1.0, 1.25], base_model="resnet50"):
         """
         初始化多尺度特征提取器
         
@@ -265,6 +282,53 @@ class MultiscaleFeatureExtractor:
         """
         self.scales = scales
         self.base_extractor = SingleScaleFeatureExtractor(base_model=base_model)
+        
+        # 特征维度
+        self.feature_dim = self.base_extractor.feature_dim
+        
+        # 注意力机制参数
+        self.attention_weights = None
+        
+        # 是否使用PCA降维
+        self.use_pca = False
+        self.pca_fitted = False
+        self.pca_dim = 512  # 降维后的维度
+    
+    def attention_fusion(self, features_list):
+        """
+        使用注意力机制融合多个特征向量
+        
+        参数:
+            features_list: 特征向量列表
+            
+        返回:
+            融合后的特征向量
+        """
+        # 特征数量
+        n_features = len(features_list)
+        
+        # 计算每个特征向量的注意力分数
+        # 这里使用特征向量的L2范数作为注意力分数的一部分
+        attention_scores = np.zeros(n_features)
+        for i, features in enumerate(features_list):
+            # 计算特征向量的L2范数
+            norm = np.linalg.norm(features)
+            # 使用softplus激活函数确保分数为正
+            attention_scores[i] = np.log(1 + np.exp(norm))
+        
+        # 使用softmax将分数转换为权重
+        exp_scores = np.exp(attention_scores)
+        self.attention_weights = exp_scores / np.sum(exp_scores)
+        
+        # 加权融合特征
+        fused_features = np.zeros_like(features_list[0])
+        for i, features in enumerate(features_list):
+            fused_features += self.attention_weights[i] * features
+        
+        # 归一化融合后的特征
+        fused_features = fused_features / (np.linalg.norm(fused_features) + 1e-8)
+        
+        return fused_features
     
     def extract_features(self, img):
         """
@@ -298,20 +362,25 @@ class MultiscaleFeatureExtractor:
             features = self.base_extractor.extract_features(scaled_img)
             all_features.append(features)
         
-        # 加权融合特征 - 给中心尺度(1.0)更高的权重
-        center_idx = self.scales.index(1.0) if 1.0 in self.scales else len(self.scales) // 2
-        weights = np.ones(len(self.scales)) * (1.0 - 0.7) / (len(self.scales) - 1)
-        weights[center_idx] = 0.7  # 给中心尺度更高的权重
+        # 使用注意力机制融合特征
+        fused_features = self.attention_fusion(all_features)
         
-        # 应用权重
-        combined_features = np.zeros_like(all_features[0])
-        for i, feat in enumerate(all_features):
-            combined_features += weights[i] * feat
+        # 如果需要，使用PCA降维
+        if self.use_pca:
+            if not self.pca_fitted:
+                # 第一次使用时初始化PCA
+                from sklearn.decomposition import PCA
+                self.pca = PCA(n_components=self.pca_dim)
+                self.pca.fit(fused_features.reshape(1, -1))
+                self.pca_fitted = True
+            
+            # 应用PCA降维
+            fused_features = self.pca.transform(fused_features.reshape(1, -1)).flatten()
         
-        # 再次归一化
-        combined_features = combined_features / (np.linalg.norm(combined_features) + 1e-8)
+        # 归一化
+        fused_features = fused_features / (np.linalg.norm(fused_features) + 1e-8)
         
-        return combined_features
+        return fused_features
 
 # 多尺度哈希函数（保留原有实现，但使用新的多尺度提取器）
 def multiscale_hash(img, hash_size=8):
