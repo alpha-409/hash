@@ -130,6 +130,10 @@ class ITQHashGenerator:
             UB, sigma, UA = np.linalg.svd(C)
             self.rotation = np.dot(UB, UA)
         
+        # 计算最终投影并保存阈值
+        Z_final = np.dot(V, self.rotation)
+        self.thresholds = np.median(Z_final, axis=0)
+        
         self.is_fitted = True
     
     def generate_hash(self, features):
@@ -155,9 +159,21 @@ class ITQHashGenerator:
         # 应用旋转矩阵
         Z = np.dot(V, self.rotation)
         
-        # 二值化 - 使用0作为阈值而不是中值
-        B = np.sign(Z)
-        B[B <= 0] = 0  # 将-1转换为0
+        # 二值化 - 使用每个维度的中值作为阈值，而不是固定的0
+        # 这样可以适应不同特征的分布
+        if Z.shape[0] == 1:  # 单个样本
+            # 使用训练时计算的阈值（如果有）
+            if hasattr(self, 'thresholds'):
+                B = Z > self.thresholds
+            else:
+                # 否则使用0作为阈值
+                B = Z > 0
+        else:
+            # 多个样本时，计算每个维度的中值
+            thresholds = np.median(Z, axis=0)
+            self.thresholds = thresholds  # 保存阈值供后续使用
+            B = Z > thresholds.reshape(1, -1)
+        
         B = B.astype(bool)
         
         # 如果只有一个样本，返回一维数组
@@ -194,9 +210,9 @@ def itq_hash(img, hash_size=8, n_bits=None):
     # 创建或获取哈希生成器
     if not hasattr(itq_hash, 'generator') or itq_hash.n_bits != n_bits:
         # 使用ViT作为基础模型
-        n_components = min(128, n_bits)
+        n_components = min(64, n_bits)  # 减小PCA组件数量，避免过拟合
         itq_hash.generator = ITQHashGenerator(n_components=n_components, n_bits=n_bits, 
-                                             n_iterations=100, base_model="vit")
+                                             n_iterations=50, base_model="vit")
         itq_hash.is_fitted = False
         itq_hash.n_bits = n_bits
         # 清除之前收集的样本
@@ -210,13 +226,15 @@ def itq_hash(img, hash_size=8, n_bits=None):
     if not itq_hash.is_fitted:
         if not hasattr(itq_hash, 'feature_samples'):
             itq_hash.feature_samples = [features]
-        elif len(itq_hash.feature_samples) < 200:  # 增加样本数量到200
+        elif len(itq_hash.feature_samples) < 300:  # 增加样本数量到300
             itq_hash.feature_samples.append(features)
         else:
             # 有足够样本时拟合ITQ
             sample_matrix = np.vstack(itq_hash.feature_samples)
             itq_hash.generator.fit(sample_matrix)
             itq_hash.is_fitted = True
+            # 释放样本内存
+            del itq_hash.feature_samples
     
     # 如果已拟合，生成哈希码
     if itq_hash.is_fitted:
@@ -235,7 +253,6 @@ def itq_hash(img, hash_size=8, n_bits=None):
     
     # 确保返回的哈希码长度为n_bits
     if len(hash_value) != n_bits:
-        print(f"警告: 哈希码长度 {len(hash_value)} 与预期的 {n_bits} 不符")
         # 如果长度不符，调整长度
         if len(hash_value) < n_bits:
             # 填充
