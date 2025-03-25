@@ -11,6 +11,7 @@ from torchvision import models, transforms
 from PIL import Image
 import tensorly as tl
 from tensorly.decomposition import tucker
+from skimage.filters import sobel
 
 tl.set_backend('pytorch')
 
@@ -25,22 +26,38 @@ class VisualSalientHashSystem:
         # 设备配置
         self.device = device or torch.device('cuda' if torch.cuda.is_available() else 'cpu')
         
-        # 基础特征提取器
+        # 基础特征提取器 - 使用预训练的ResNet50但只保留中间层特征
+        # 使用更浅的特征可能更适合哈希任务
         self.base_model = models.resnet50(weights=models.ResNet50_Weights.IMAGENET1K_V1)
-        self.base_model = nn.Sequential(*list(self.base_model.children())[:-2])  # 保留layer4输出
+        # 只保留到layer3，layer4特征可能过于抽象
+        self.base_model = nn.Sequential(
+            self.base_model.conv1,
+            self.base_model.bn1,
+            self.base_model.relu,
+            self.base_model.maxpool,
+            self.base_model.layer1,
+            self.base_model.layer2,
+            self.base_model.layer3
+        )
         self.base_model = self.base_model.to(self.device).eval()
         
-        # 视觉显著性模块
+        # 改进的视觉显著性模块 - 使用多尺度特征
         self.saliency_layer = nn.Sequential(
-            nn.Conv2d(2048, 512, 3, padding=1),
+            nn.Conv2d(1024, 256, 3, padding=1),
+            nn.BatchNorm2d(256),
             nn.ReLU(inplace=True),
-            nn.Conv2d(512, 1, 1),
+            nn.Conv2d(256, 64, 3, padding=1),
+            nn.BatchNorm2d(64),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(64, 1, 1),
             nn.Sigmoid()
         ).to(self.device)
         
-        # 张量分解参数
+        # 张量分解参数 - 更平衡的秩分配
         self.hash_size = hash_size
-        self.rank = [hash_size//2, hash_size//2, hash_size//2]
+        # 调整秩以更好地捕获空间和通道信息
+        rank_factor = min(14, hash_size // 4)  # 限制最大秩
+        self.rank = [rank_factor, rank_factor, rank_factor * 2]  # 通道维度给予更高的秩
         
         # 图像预处理
         self.preprocess = transforms.Compose([
@@ -73,20 +90,42 @@ class VisualSalientHashSystem:
             # 构造3D张量 [H, W, C]
             tensor = weighted_features.permute(1, 2, 0)
         
-        # 可选：应用额外的归一化
-        # tensor = tensor / (tensor.norm(dim=-1, keepdim=True) + 1e-8)
+        # 应用特征归一化以提高稳定性
+        tensor = tensor / (tensor.norm(dim=-1, keepdim=True) + 1e-8)
         
         return tensor
 
     def _tensor_decomposition(self, tensor):
         """执行张量分解生成哈希"""
         # Tucker分解
-        # 修正参数名称：从 ranks 改为 rank
-        core, _ = tucker(tensor, rank=self.rank)
+        core, factors = tucker(tensor, rank=self.rank)
         
-        # 核心张量处理
+        # 核心张量处理 - 使用更稳健的阈值策略
         core_vector = core.flatten()
-        hash_bits = (core_vector > core_vector.median()).cpu().numpy()
+        
+        # 使用排序而不是中值，可以更好地处理偏斜分布
+        sorted_values, _ = torch.sort(core_vector)
+        threshold_idx = int(len(sorted_values) * 0.5)  # 50%分位点
+        threshold = sorted_values[threshold_idx]
+        
+        # 生成二进制哈希
+        hash_bits = (core_vector > threshold).cpu().numpy()
+        
+        # 确保哈希长度正确
+        if len(hash_bits) > self.hash_size:
+            # 如果太长，只保留最显著的位
+            importance = np.abs(core_vector.cpu().numpy() - threshold.cpu().numpy())
+            top_indices = np.argsort(importance)[-self.hash_size:]
+            mask = np.zeros_like(hash_bits)
+            mask[top_indices] = 1
+            hash_bits = hash_bits * mask
+            hash_bits = hash_bits[hash_bits != 0]
+        
+        # 如果太短，填充到指定长度
+        if len(hash_bits) < self.hash_size:
+            padding = np.zeros(self.hash_size - len(hash_bits), dtype=np.uint8)
+            hash_bits = np.concatenate([hash_bits, padding])
+            
         return hash_bits.astype(np.uint8)
 
     def _extract_deep_features(self, tensor):
@@ -95,9 +134,18 @@ class VisualSalientHashSystem:
         if tensor.dim() == 4:  # [B, H, W, C]
             tensor = tensor[0]  # 取第一个样本
             
-        # 张量标准化
-        norm_tensor = tensor / (torch.norm(tensor, p=2) + 1e-8)
-        return norm_tensor.flatten().cpu().numpy()
+        # 使用SVD提取主要特征方向
+        tensor_flat = tensor.reshape(-1, tensor.shape[-1])
+        U, S, V = torch.svd(tensor_flat)
+        
+        # 使用奇异值加权的特征向量作为特征表示
+        weighted_features = V[:, :min(512, V.shape[1])] * S[:min(512, S.shape[0])].unsqueeze(0)
+        features = weighted_features.flatten()
+        
+        # L2归一化
+        features = features / (torch.norm(features, p=2) + 1e-8)
+        
+        return features.cpu().numpy()
 
     def process_image(self, img):
         """统一图像处理流程"""
