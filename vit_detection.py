@@ -6,8 +6,10 @@ from PIL import Image
 import tensorly as tl
 from tensorly.decomposition import tucker
 
-# 设置tensorly后端为PyTorch
+# 设置tensorly后端为PyTorch并启用GPU
 tl.set_backend('pytorch')
+if torch.cuda.is_available():
+    tl.set_device('cuda')
 
 class ViTFeatureExtractor:
     def __init__(self, model_name="vit_b_16"):
@@ -121,33 +123,44 @@ class ViTTensorHashExtractor(ViTFeatureExtractor):
         with torch.no_grad():
             _ = self.model(img)  # 触发钩子收集特征
         
-        # 将特征转移到CPU并转换为NumPy数组
-        features = [f.cpu().numpy() for f in self.layer_features]
-        
-        # 构造3D张量 (layers×features×dims)
-        tensor = np.stack(features)
-        return tensor
+        # 保持特征在GPU上，不要过早转换为NumPy
+        if self.device.type == 'cuda':
+            # 直接在GPU上构建张量
+            tensor = torch.stack(self.layer_features)
+            return tensor
+        else:
+            # CPU模式下的原始逻辑
+            features = [f.cpu().numpy() for f in self.layer_features]
+            tensor = np.stack(features)
+            return torch.tensor(tensor, dtype=torch.float32)
 
     def generate_tensor_hash(self, img, hash_size=64):
         """基于张量分解的哈希生成"""
         # 1. 提取特征张量
         tensor = self.extract_tensor_features(img)
         
-        # 2. 转换为PyTorch张量进行Tucker分解
-        tensor = torch.tensor(tensor, dtype=torch.float32)
+        # 2. 确保张量在GPU上
+        if self.device.type == 'cuda' and tensor.device.type != 'cuda':
+            tensor = tensor.to(self.device)
         
-        # 3. Tucker分解降维
+        # 3. Tucker分解降维 - 直接在GPU上执行
         core, _ = tucker(tensor, rank=self.ranks)
-        core_vector = core.flatten().cpu().numpy()  # 展平为向量
         
-        # 4. 动态阈值二值化
-        threshold = np.percentile(core_vector, 60)  # 使用60百分位数
-        hash_code = (core_vector > threshold).astype(np.uint8)
+        # 4. 只在最后阶段将结果转移到CPU
+        core_vector = core.flatten()
         
-        # 5. 截断到目标长度
+        # 计算阈值 - 在GPU上完成
+        sorted_values, _ = torch.sort(core_vector)
+        threshold_idx = int(len(sorted_values) * 0.6)
+        threshold = sorted_values[threshold_idx]
+        
+        # 生成哈希码 - 在GPU上完成
+        hash_code = (core_vector > threshold).cpu().numpy().astype(np.uint8)
+        
+        # 5. 截断到目标长度 - 在CPU上完成
         if len(hash_code) > hash_size:
             # 选择方差最大的位
-            importance = np.abs(core_vector - threshold)
+            importance = np.abs(core_vector.cpu().numpy() - threshold.cpu().numpy())
             top_indices = np.argsort(importance)[-hash_size:]
             selected_hash = np.zeros(hash_size, dtype=np.uint8)
             for i, idx in enumerate(sorted(top_indices)):
