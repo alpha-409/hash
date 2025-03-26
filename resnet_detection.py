@@ -98,31 +98,24 @@ def resnet_hash(img, hash_size=8):
     if not hasattr(resnet_hash, 'extractor'):
         resnet_hash.extractor = ResNetFeatureExtractor(layer='avgpool')
     
-    # # 提取特征
-    # features = resnet_hash.extractor.extract_features(img)
-    
-    # # 将特征展平
-    # features = features.flatten()
-    
-    # # 如果需要，可以使用PCA或其他方法降维到指定的hash_size
-    # # 这里简单地取前hash_size*hash_size个元素
-    # if hash_size * hash_size < len(features):
-    #     features = features[:hash_size * hash_size]
-    
-    # # 计算特征的中值
-    # median_value = np.median(features)
-    
-    # # 生成二进制哈希
-    # hash_value = features > median_value
-    if not hasattr(resnet_hash, 'pca'):
-        resnet_hash.pca = PCA(n_components=hash_size**2)
-        # 需要用样本数据预先训练PCA（这里需要训练逻辑）
-    
     # 提取原始特征
     features = resnet_hash.extractor.extract_features(img).flatten()
     
-    # PCA降维
-    reduced_features = resnet_hash.pca.transform(features.reshape(1,-1))[0]
+    # 初始化或使用PCA
+    if not hasattr(resnet_hash, 'pca') or not hasattr(resnet_hash.pca, 'components_'):
+        # PCA尚未训练，使用当前特征进行初始化训练
+        resnet_hash.pca = PCA(n_components=hash_size**2)
+        resnet_hash.pca.fit(features.reshape(1, -1))
+        print("PCA已初始化并训练")
+    
+    try:
+        # PCA降维
+        reduced_features = resnet_hash.pca.transform(features.reshape(1,-1))[0]
+    except (AttributeError, ValueError) as e:
+        # 如果PCA转换失败，重新训练PCA
+        print(f"PCA转换失败，重新训练: {e}")
+        resnet_hash.pca.fit(features.reshape(1, -1))
+        reduced_features = resnet_hash.pca.transform(features.reshape(1,-1))[0]
     
     # 自适应二值化（使用各维度均值）
     hash_value = (reduced_features > np.mean(reduced_features)).astype(int)
