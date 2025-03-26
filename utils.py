@@ -7,6 +7,7 @@ from torchvision import transforms
 import concurrent.futures
 from tqdm import tqdm  # 添加进度条支持
 import multiprocessing  # 添加这一行来获取系统CPU核心数
+import time  # 添加时间模块
 
 def load_data(dataset, data_dir='./data', transform=None, simulate_images=True, num_workers=None):
     """
@@ -22,6 +23,9 @@ def load_data(dataset, data_dir='./data', transform=None, simulate_images=True, 
     返回:
         dict: 包含数据集信息的字典
     """
+    # 开始计时
+    start_time = time.time()
+    
     # 如果未指定线程数，则使用系统可用的最大线程数
     if num_workers is None:
         num_workers = multiprocessing.cpu_count()
@@ -33,10 +37,17 @@ def load_data(dataset, data_dir='./data', transform=None, simulate_images=True, 
     
     print(f"使用数据目录: {data_dir}")
     
+    # 加载数据集
     if dataset.lower() == 'copydays':
-        return load_copydays(data_dir, transform, simulate_images, num_workers)
+        result = load_copydays(data_dir, transform, simulate_images, num_workers)
     else:
         raise ValueError(f"不支持的数据集: {dataset}")
+    
+    # 计算总耗时
+    total_time = time.time() - start_time
+    print(f"数据集 '{dataset}' 加载完成，总耗时: {total_time:.2f}秒")
+    
+    return result
 
 def load_copydays(data_dir='./data', transform=None, simulate_images=True, num_workers=None):
     """
@@ -51,6 +62,9 @@ def load_copydays(data_dir='./data', transform=None, simulate_images=True, num_w
     返回:
         dict: 包含 Copydays 数据集信息的字典
     """
+    # 开始计时
+    start_time = time.time()
+    
     # 如果未指定线程数，则使用系统可用的最大线程数
     if num_workers is None:
         num_workers = multiprocessing.cpu_count()
@@ -66,6 +80,7 @@ def load_copydays(data_dir='./data', transform=None, simulate_images=True, num_w
         ])
     
     # 加载 ground truth 数据
+    gnd_start_time = time.time()
     gnd_path = os.path.join(data_dir, 'copydays', 'gnd_copydays.pkl')
     
     # 检查 ground truth 文件是否存在
@@ -77,6 +92,9 @@ def load_copydays(data_dir='./data', transform=None, simulate_images=True, num_w
             data = pickle.load(f)
     except Exception as e:
         raise Exception(f"加载 ground truth 文件时出错: {e}")
+    
+    gnd_time = time.time() - gnd_start_time
+    print(f"Ground truth 数据加载耗时: {gnd_time:.2f}秒")
     
     # 检查数据格式
     required_keys = ['gnd', 'imlist', 'qimlist']
@@ -180,6 +198,7 @@ def load_copydays(data_dir='./data', transform=None, simulate_images=True, num_w
         print("警告: 没有加载任何数据库图像!")
     
     # 构建正样本和负样本对
+    positive_start_time = time.time()
     positives = []  # 存储(查询索引, 正样本索引)对
     
     for q_idx, variants in enumerate(gnd):
@@ -187,6 +206,16 @@ def load_copydays(data_dir='./data', transform=None, simulate_images=True, num_w
         for variant_type in ['strong', 'crops', 'jpegqual']:
             for db_idx in variants[variant_type]:
                 positives.append((q_idx, db_idx))
+    
+    positive_time = time.time() - positive_start_time
+    print(f"正样本对构建耗时: {positive_time:.2f}秒 (共{len(positives)}对)")
+    
+    # 计算总耗时
+    total_time = time.time() - start_time
+    print(f"Copydays 数据集加载完成，总耗时: {total_time:.2f}秒")
+    print(f"- 查询图像: {len(query_images)}张")
+    print(f"- 数据库图像: {len(db_images)}张")
+    print(f"- 正样本对: {len(positives)}对")
     
     return {
         'query_images': query_images,
