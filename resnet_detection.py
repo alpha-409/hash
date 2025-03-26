@@ -4,7 +4,7 @@ from torchvision import models, transforms
 import numpy as np
 from PIL import Image
 from sklearn.metrics.pairwise import cosine_similarity
-
+from sklearn.decomposition import PCA
 class ResNetFeatureExtractor:
     def __init__(self, layer='avgpool'):
         """
