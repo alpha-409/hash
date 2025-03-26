@@ -1,220 +1,228 @@
 import torch
 import torch.nn as nn
-from torchvision import models, transforms
+import torch.nn.functional as F
+import torchvision.models as models
 import numpy as np
 from PIL import Image
-import torch.nn.functional as F
 
-class ContrastiveFeatureExtractor:
-    def __init__(self, model_name="resnet50"):
+# ---------------------------
+# 对比学习特征提取器定义
+# ---------------------------
+class ContrastiveFeatureExtractor(nn.Module):
+    """
+    基于对比学习的特征提取器：
+    使用预训练ResNet50去掉最后全连接层作为骨干，并增加投影头，
+    得到归一化的对比学习嵌入向量。
+    """
+    def __init__(self, base_model_name='resnet50', projection_dim=128):
+        super(ContrastiveFeatureExtractor, self).__init__()
+        # 加载预训练的ResNet50模型
+        backbone = models.__dict__[base_model_name](weights=models.ResNet50_Weights.IMAGENET1K_V1)
+        # 移除最后全连接层（保留avgpool后的特征）
+        self.feature_extractor = nn.Sequential(*list(backbone.children())[:-1])
+        self.feature_dim = backbone.fc.in_features  # 2048
+        # 构造投影头：两层MLP
+        self.projection_head = nn.Sequential(
+            nn.Linear(self.feature_dim, self.feature_dim),
+            nn.ReLU(),
+            nn.Linear(self.feature_dim, projection_dim)
+        )
+    
+    def forward(self, x):
         """
-        初始化对比学习特征提取器
-        
         参数:
-            model_name (str): 基础模型名称，支持'resnet50'和'vit'
+            x: 输入张量，形状 (batch_size, 3, H, W)
+        返回:
+            projections: 归一化后的投影向量，形状 (batch_size, projection_dim)
+            features: 基础特征向量，形状 (batch_size, feature_dim)
         """
-        self.model_name = model_name
-        
-        # 加载预训练模型
-        if model_name == "resnet50":
-            # 使用SimCLR或MoCo预训练的ResNet50更好，这里使用ImageNet预训练作为替代
-            base_model = models.resnet50(weights=models.ResNet50_Weights.IMAGENET1K_V1)
-            self.model = nn.Sequential(*list(base_model.children())[:-1])
-            self.feature_dim = 2048
-        elif model_name == "vit":
-            base_model = models.vit_b_16(weights=models.ViT_B_16_Weights.IMAGENET1K_V1)
-            self.model = base_model
-            self.feature_dim = base_model.hidden_dim
-            # 移除分类头
-            self.model.heads = nn.Identity()
+        features = self.feature_extractor(x)   # (batch_size, feature_dim, 1, 1)
+        features = features.view(features.size(0), -1)  # (batch_size, feature_dim)
+        projections = self.projection_head(features)    # (batch_size, projection_dim)
+        projections = F.normalize(projections, dim=1)
+        return projections, features
+
+# 全局变量保存对比学习模型，避免重复初始化
+_contrastive_extractor = None
+
+def get_contrastive_extractor():
+    global _contrastive_extractor
+    if _contrastive_extractor is None:
+        # 这里默认构造一个对比学习特征提取器，投影维度设为128
+        _contrastive_extractor = ContrastiveFeatureExtractor(projection_dim=128)
+        _contrastive_extractor.eval()
+        # 若有GPU则移动到GPU
+        device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+        _contrastive_extractor.to(device)
+    return _contrastive_extractor
+
+# ---------------------------
+# 随机投影矩阵（固定全局）定义
+# ---------------------------
+_global_projection_matrix = None
+def get_projection_matrix(d, target_dim):
+    """
+    获取固定随机投影矩阵，将原始维度 d 投影到目标维度 target_dim
+    """
+    global _global_projection_matrix
+    if _global_projection_matrix is None or _global_projection_matrix.shape != (d, target_dim):
+        np.random.seed(42)
+        _global_projection_matrix = np.random.randn(d, target_dim)
+    return _global_projection_matrix
+
+# ---------------------------
+# 多尺度对比特征提取与张量构造
+# ---------------------------
+def extract_multiscale_contrastive_features(img, scales, hash_size):
+    """
+    对输入图像在不同尺度下使用对比学习模型提取特征，
+    返回形状为 (n_scales, d) 的特征矩阵，其中 d为对比嵌入维度（例如128）
+    
+    参数:
+        img: 输入图像，支持 PIL.Image 或 torch.Tensor（形状 (3, H, W)）
+        scales: 尺度因子列表，例如 [1.0, 0.75, 0.5]
+        hash_size: 哈希边长，用于后续降维（目标维度 = hash_size^2）
+    返回:
+        numpy.ndarray: 多尺度特征矩阵，形状 (n_scales, d)
+    """
+    extractor = get_contrastive_extractor()
+    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    features_list = []
+    for scale in scales:
+        # 对于张量输入：利用 F.interpolate 进行缩放
+        if isinstance(img, torch.Tensor):
+            img_tensor = img.unsqueeze(0) if img.dim() == 3 else img
+            _, C, H, W = img_tensor.shape
+            new_H = max(1, int(H * scale))
+            new_W = max(1, int(W * scale))
+            img_scaled = F.interpolate(img_tensor, size=(new_H, new_W), mode='bilinear', align_corners=False)
+            img_scaled = img_scaled.squeeze(0)
+            # 需添加 batch 维度
+            img_scaled = img_scaled.unsqueeze(0).to(device)
+        # 对于 PIL.Image 输入，转换为张量并resize
+        elif isinstance(img, Image.Image):
+            new_size = (max(1, int(img.size[0] * scale)), max(1, int(img.size[1] * scale)))
+            img_scaled = img.resize(new_size, Image.ANTIALIAS)
+            # 使用与ResNet预处理一致的方式，这里简单转为tensor（注意需归一化可根据实际训练时设置）
+            transform = models.ResNet50_Weights.IMAGENET1K_V1.transforms()
+            img_scaled = transform(img_scaled).unsqueeze(0).to(device)
         else:
-            raise ValueError(f"不支持的模型: {model_name}")
+            raise ValueError("输入类型不支持，仅支持 PIL.Image 或 torch.Tensor")
         
-        # 设置为评估模式
-        self.model.eval()
-        
-        # 移动到GPU（如果可用）
-        self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-        self.model = self.model.to(self.device)
-        
-        # 图像预处理
-        self.preprocess = transforms.Compose([
-            transforms.Resize(256),
-            transforms.CenterCrop(224),
-            transforms.ToTensor(),
-            transforms.Normalize(mean=[0.485, 0.456, 0.406], 
-                                std=[0.229, 0.224, 0.225])
-        ])
-        
-        # 对比学习增强
-        self.augment = transforms.Compose([
-            transforms.RandomResizedCrop(224, scale=(0.8, 1.0)),
-            transforms.RandomHorizontalFlip(),
-            transforms.RandomApply([transforms.ColorJitter(0.4, 0.4, 0.4, 0.1)], p=0.8),
-            transforms.RandomGrayscale(p=0.2),
-            transforms.ToTensor(),
-            transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
-        ])
-    
-    def extract_features(self, img, augment=False):
-        """
-        从图像中提取特征
-        
-        参数:
-            img: PIL图像或张量
-            augment: 是否应用数据增强
-            
-        返回:
-            特征向量
-        """
-        # 如果输入是PIL图像，进行预处理
-        if isinstance(img, Image.Image):
-            if augment:
-                img = self.augment(img)
-            else:
-                img = self.preprocess(img)
-        
-        # 如果输入是张量但不是批次形式，添加批次维度
-        if isinstance(img, torch.Tensor) and img.dim() == 3:
-            img = img.unsqueeze(0)
-        
-        # 移动到相应设备
-        img = img.to(self.device)
-        
-        # 前向传播
         with torch.no_grad():
-            features = self.model(img)
-            
-            # 处理不同模型的输出格式
-            if isinstance(features, torch.Tensor):
-                if features.dim() > 2:
-                    features = features.view(features.size(0), -1)
-        
-        # 转换为NumPy数组
-        features = features.cpu().numpy()
-        
-        # 如果是批次，只返回第一个样本的特征
-        if features.shape[0] == 1:
-            features = features.squeeze(0)
-        
-        # L2归一化
-        features = features / (np.linalg.norm(features) + 1e-8)
-        
-        return features
-    
-    def extract_contrastive_features(self, img, n_views=4):
-        """
-        提取对比学习特征
-        
-        参数:
-            img: 输入图像
-            n_views: 增强视图数量
-            
-        返回:
-            对比学习特征
-        """
-        if not isinstance(img, Image.Image):
-            # 如果是张量，转换为PIL图像
-            if isinstance(img, torch.Tensor):
-                if img.dim() == 4:
-                    img = img[0]
-                img = transforms.ToPILImage()(img.cpu())
-        
-        # 提取原始特征
-        orig_features = self.extract_features(img, augment=False)
-        
-        # 提取多个增强视图的特征
-        aug_features_list = []
-        for _ in range(n_views):
-            aug_features = self.extract_features(img, augment=True)
-            aug_features_list.append(aug_features)
-        
-        # 计算增强视图特征的平均值
-        aug_features_mean = np.mean(aug_features_list, axis=0)
-        aug_features_mean = aug_features_mean / (np.linalg.norm(aug_features_mean) + 1e-8)
-        
-        # 融合原始特征和增强特征
-        combined_features = 0.7 * orig_features + 0.3 * aug_features_mean
-        combined_features = combined_features / (np.linalg.norm(combined_features) + 1e-8)
-        
-        return combined_features
+            projections, _ = extractor(img_scaled)  # 使用投影向量作为对比特征
+        # 得到 shape (1, projection_dim)，取第一个样本并转换为 numpy 数组
+        feat = projections[0].cpu().numpy()
+        features_list.append(feat)
+    return np.stack(features_list, axis=0)
 
-def contrastive_hash(img, hash_size=8):
+def project_features(features_matrix, hash_size):
     """
-    使用对比学习提取特征并生成哈希
+    利用固定随机投影将每个尺度的对比特征降维到目标维度（hash_size^2），
+    并重塑为二维形式构成张量
     
     参数:
-        img: 输入图像
-        hash_size: 哈希大小
-        
+        features_matrix: 形状 (n_scales, d)
+        hash_size: 指定哈希边长，目标降维后向量长度为 hash_size^2
     返回:
-        二进制哈希值
+        numpy.ndarray: 张量特征，形状 (n_scales, hash_size, hash_size)
     """
-    # 创建特征提取器（如果尚未创建）
-    if not hasattr(contrastive_hash, 'extractor'):
-        # 使用ViT作为基础模型，性能更好
-        contrastive_hash.extractor = ContrastiveFeatureExtractor(model_name="vit")
-    
-    # 提取对比学习特征
-    features = contrastive_hash.extractor.extract_contrastive_features(img, n_views=2)
-    
-    # 如果需要，可以使用PCA或其他方法降维到指定的hash_size
-    # 这里简单地取前hash_size*hash_size个元素
-    if hash_size * hash_size < len(features):
-        features = features[:hash_size * hash_size]
-    elif hash_size * hash_size > len(features):
-        # 如果特征维度小于所需哈希位数，通过重复填充
-        repeats = int(np.ceil((hash_size * hash_size) / len(features)))
-        features = np.tile(features, repeats)[:hash_size * hash_size]
-    
-    # 使用迭代量化方法生成更好的二进制码
-    # 简单实现：计算特征的中值作为阈值
-    median_value = np.median(features)
-    hash_value = features > median_value
-    
-    return hash_value
+    n_scales, d = features_matrix.shape
+    target_dim = hash_size * hash_size
+    R = get_projection_matrix(d, target_dim)  # (d, target_dim)
+    projected = np.dot(features_matrix, R)  # (n_scales, target_dim)
+    tensor_features = projected.reshape(n_scales, hash_size, hash_size)
+    return tensor_features
 
-def contrastive_deep(img, feature_dim=None):
+def fuse_tensor_features(tensor_features):
     """
-    使用对比学习提取深度特征用于相似度计算
+    对多尺度张量特征进行张量分解：
+    将张量在尺度维度上展开为矩阵后，利用 SVD 得到第一左奇异向量作为各尺度加权，
+    融合得到最终特征向量
     
     参数:
-        img: 输入图像
-        feature_dim: 特征维度，默认为None（使用完整特征）
-        
+        tensor_features: 形状 (n_scales, hash_size, hash_size)
     返回:
-        特征向量
+        numpy.ndarray: 融合后的特征向量，长度为 hash_size^2
     """
-    # 创建特征提取器（如果尚未创建）
-    if not hasattr(contrastive_deep, 'extractor'):
-        # 使用ViT作为基础模型，性能更好
-        contrastive_deep.extractor = ContrastiveFeatureExtractor(model_name="vit")
+    n_scales, h, w = tensor_features.shape
+    A = tensor_features.reshape(n_scales, -1)  # (n_scales, h*w)
+    U, S, Vt = np.linalg.svd(A, full_matrices=False)
+    fused_vector = np.dot(U[:, 0], A)  # (h*w,)
+    return fused_vector
+
+# ---------------------------
+# 基于对比学习的哈希与深度特征函数
+# ---------------------------
+def contrastive_hash(img, hash_size=8, scales=[1.0, 0.75, 0.5]):
+    """
+    基于对比学习特征提取、张量构造与分解生成二值哈希码
     
-    # 提取对比学习特征
-    features = contrastive_deep.extractor.extract_contrastive_features(img, n_views=2)
+    参数:
+        img: 输入图像（PIL.Image 或 torch.Tensor）
+        hash_size: 哈希边长（最终哈希长度 = hash_size^2）
+        scales: 多尺度缩放因子列表
+    返回:
+        numpy.ndarray: 二值哈希向量
+    """
+    # 1. 多尺度提取对比特征，得到 shape (n_scales, projection_dim)
+    features_matrix = extract_multiscale_contrastive_features(img, scales, hash_size)
+    # 2. 固定随机投影降维，并构造张量 (n_scales, hash_size, hash_size)
+    tensor_features = project_features(features_matrix, hash_size)
+    # 3. 张量分解融合多尺度信息，得到最终融合向量（长度 = hash_size^2）
+    fused_feature = fuse_tensor_features(tensor_features)
+    # 4. 以融合特征中值作为阈值二值化生成哈希码
+    median_val = np.median(fused_feature)
+    binary_hash = fused_feature > median_val
+    return binary_hash
+
+def contrastive_deep(img, hash_size=8, scales=[1.0, 0.75, 0.5]):
+    """
+    基于对比学习特征融合生成归一化的深度特征向量，用于相似度计算
     
-    # 如果指定了特征维度，截取前feature_dim个元素
-    if feature_dim is not None and feature_dim < len(features):
-        features = features[:feature_dim]
-    
-    return features
+    参数:
+        img: 输入图像（PIL.Image 或 torch.Tensor）
+        hash_size: 用于降维时的哈希边长（输出长度 = hash_size^2）
+        scales: 多尺度缩放因子列表
+    返回:
+        numpy.ndarray: 归一化的深度特征向量
+    """
+    features_matrix = extract_multiscale_contrastive_features(img, scales, hash_size)
+    tensor_features = project_features(features_matrix, hash_size)
+    fused_feature = fuse_tensor_features(tensor_features)
+    norm = np.linalg.norm(fused_feature)
+    if norm > 0:
+        fused_feature = fused_feature / norm
+    return fused_feature
 
 def compute_contrastive_distance(feature1, feature2):
     """
-    计算两个对比学习特征向量之间的距离
+    计算两个深度特征向量的余弦距离（1 - 余弦相似度）
     
     参数:
-        feature1, feature2: 特征向量
-        
+        feature1, feature2: 深度特征向量
     返回:
-        距离值（越小表示越相似）
+        float: 余弦距离（值越小表示越相似）
     """
-    # 确保特征已归一化
-    feature1 = feature1 / (np.linalg.norm(feature1) + 1e-8)
-    feature2 = feature2 / (np.linalg.norm(feature2) + 1e-8)
-    
-    # 使用余弦距离（1 - 余弦相似度）
-    similarity = np.dot(feature1, feature2)
-    # 转换为距离（值越小表示越相似）
+    similarity = np.dot(feature1, feature2) / (np.linalg.norm(feature1) * np.linalg.norm(feature2))
     distance = 1.0 - similarity
     return distance
+
+# ---------------------------
+# 示例（可用于调试）
+# ---------------------------
+if __name__ == '__main__':
+    # 构造一个示例输入（随机图像张量，形状 (3, 224, 224)）
+    dummy_img = torch.randn(3, 224, 224)
+    
+    # 生成对比学习哈希码
+    hash_code = contrastive_hash(dummy_img, hash_size=8, scales=[1.0, 0.75, 0.5])
+    print("Contrastive Hash Code:", hash_code)
+    
+    # 提取深度特征
+    deep_feature = contrastive_deep(dummy_img, hash_size=8, scales=[1.0, 0.75, 0.5])
+    print("Contrastive Deep Feature (normalized):", deep_feature)
+    
+    # 计算距离（示例：自己与自己距离应为0）
+    distance = compute_contrastive_distance(deep_feature, deep_feature)
+    print("Distance (self):", distance)
