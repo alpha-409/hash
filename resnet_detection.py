@@ -95,8 +95,8 @@ def resnet_hash(img, hash_size=8):
         二进制哈希值
     """
     # 创建特征提取器（如果尚未创建）
-    # if not hasattr(resnet_hash, 'extractor'):
-    #     resnet_hash.extractor = ResNetFeatureExtractor(layer='avgpool')
+    if not hasattr(resnet_hash, 'extractor'):
+        resnet_hash.extractor = ResNetFeatureExtractor(layer='avgpool')
     
     # # 提取特征
     # features = resnet_hash.extractor.extract_features(img)
