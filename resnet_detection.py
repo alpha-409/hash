@@ -95,25 +95,37 @@ def resnet_hash(img, hash_size=8):
         二进制哈希值
     """
     # 创建特征提取器（如果尚未创建）
-    if not hasattr(resnet_hash, 'extractor'):
-        resnet_hash.extractor = ResNetFeatureExtractor(layer='avgpool')
+    # if not hasattr(resnet_hash, 'extractor'):
+    #     resnet_hash.extractor = ResNetFeatureExtractor(layer='avgpool')
     
-    # 提取特征
-    features = resnet_hash.extractor.extract_features(img)
+    # # 提取特征
+    # features = resnet_hash.extractor.extract_features(img)
     
-    # 将特征展平
-    features = features.flatten()
+    # # 将特征展平
+    # features = features.flatten()
     
-    # 如果需要，可以使用PCA或其他方法降维到指定的hash_size
-    # 这里简单地取前hash_size*hash_size个元素
-    if hash_size * hash_size < len(features):
-        features = features[:hash_size * hash_size]
+    # # 如果需要，可以使用PCA或其他方法降维到指定的hash_size
+    # # 这里简单地取前hash_size*hash_size个元素
+    # if hash_size * hash_size < len(features):
+    #     features = features[:hash_size * hash_size]
     
-    # 计算特征的中值
-    median_value = np.median(features)
+    # # 计算特征的中值
+    # median_value = np.median(features)
     
-    # 生成二进制哈希
-    hash_value = features > median_value
+    # # 生成二进制哈希
+    # hash_value = features > median_value
+    if not hasattr(resnet_hash, 'pca'):
+        resnet_hash.pca = PCA(n_components=hash_size**2)
+        # 需要用样本数据预先训练PCA（这里需要训练逻辑）
+    
+    # 提取原始特征
+    features = resnet_hash.extractor.extract_features(img).flatten()
+    
+    # PCA降维
+    reduced_features = resnet_hash.pca.transform(features.reshape(1,-1))[0]
+    
+    # 自适应二值化（使用各维度均值）
+    hash_value = (reduced_features > np.mean(reduced_features)).astype(int)
     
     return hash_value
 
