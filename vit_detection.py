@@ -8,8 +8,12 @@ from tensorly.decomposition import tucker
 
 # 设置tensorly后端为PyTorch并启用GPU
 tl.set_backend('pytorch')
-if torch.cuda.is_available():
-    tl.set_device('cuda')
+# Try to set device if available in this version of tensorly
+try:
+    if torch.cuda.is_available():
+        tl.set_device('cuda')
+except AttributeError:
+    print("TensorLy version doesn't support set_device, using default device")
 
 class ViTFeatureExtractor:
     def __init__(self, model_name="vit_b_16"):
