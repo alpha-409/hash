@@ -118,116 +118,6 @@ def load_copydays(data_dir='./data', transform=None, simulate_images=True, num_w
             os.makedirs(img_dir, exist_ok=True)
             print(f"已创建图像目录: {img_dir}")
     
-    # 加载查询图像
-    query_images = []
-    query_paths = []
-    missing_query_images = 0
-    
-    for q_idx, q_name in enumerate(qimlist):
-        img_path = os.path.join(img_dir, q_name + '.jpg')
-        query_paths.append(img_path)
-        
-        if os.path.exists(img_path):
-            try:
-                img = Image.open(img_path).convert('RGB')
-                if transform:
-                    img = transform(img)
-                query_images.append(img)
-            except Exception as e:
-                print(f"加载图像 {img_path} 时出错: {e}")
-                missing_query_images += 1
-                if simulate_images:
-                    # 创建一个随机图像作为替代
-                    img_tensor = torch.randn(3, 224, 224)
-                    query_images.append(img_tensor)
-        else:
-            missing_query_images += 1
-            if simulate_images:
-                # 创建一个随机图像作为替代
-                img_tensor = torch.randn(3, 224, 224)
-                query_images.append(img_tensor)
-    
-    if missing_query_images > 0:
-        print(f"警告: {missing_query_images}/{len(qimlist)} 个查询图像文件不存在或无法加载。")
-        if simulate_images:
-            print(f"已生成 {missing_query_images} 个模拟图像作为替代。")
-    
-    # 加载数据库图像
-    db_images = []
-    db_paths = []
-    missing_db_images = 0
-    
-    for db_idx, db_name in enumerate(imlist):
-        img_path = os.path.join(img_dir, db_name + '.jpg')
-        db_paths.append(img_path)
-        
-        if os.path.exists(img_path):
-            try:
-                img = Image.open(img_path).convert('RGB')
-                if transform:
-                    img = transform(img)
-                db_images.append(img)
-            except Exception as e:
-                print(f"加载图像 {img_path} 时出错: {e}")
-                missing_db_images += 1
-                if simulate_images:
-                    # 创建一个随机图像作为替代
-                    img_tensor = torch.randn(3, 224, 224)
-                    db_images.append(img_tensor)
-        else:
-            missing_db_images += 1
-            if simulate_images:
-                # 创建一个随机图像作为替代
-                img_tensor = torch.randn(3, 224, 224)
-                db_images.append(img_tensor)
-    
-    if missing_db_images > 0:
-        print(f"警告: {missing_db_images}/{len(imlist)} 个数据库图像文件不存在或无法加载。")
-        if simulate_images:
-            print(f"已生成 {missing_db_images} 个模拟图像作为替代。")
-    
-    # 如果成功加载了图像，则转换为张量
-    if query_images:
-        query_images = torch.stack(query_images) if isinstance(query_images[0], torch.Tensor) else query_images
-    else:
-        print("警告: 没有加载任何查询图像!")
-    
-    if db_images:
-        db_images = torch.stack(db_images) if isinstance(db_images[0], torch.Tensor) else db_images
-    else:
-        print("警告: 没有加载任何数据库图像!")
-    
-    # 构建正样本和负样本对
-    positive_start_time = time.time()
-    positives = []  # 存储(查询索引, 正样本索引)对
-    
-    for q_idx, variants in enumerate(gnd):
-        # 对于每个查询图像，收集所有变形版本作为正样本
-        for variant_type in ['strong', 'crops', 'jpegqual']:
-            for db_idx in variants[variant_type]:
-                positives.append((q_idx, db_idx))
-    
-    positive_time = time.time() - positive_start_time
-    print(f"正样本对构建耗时: {positive_time:.2f}秒 (共{len(positives)}对)")
-    
-    # 计算总耗时
-    total_time = time.time() - start_time
-    print(f"Copydays 数据集加载完成，总耗时: {total_time:.2f}秒")
-    print(f"- 查询图像: {len(query_images)}张")
-    print(f"- 数据库图像: {len(db_images)}张")
-    print(f"- 正样本对: {len(positives)}对")
-    
-    return {
-        'query_images': query_images,
-        'db_images': db_images,
-        'query_paths': query_paths,
-        'db_paths': db_paths,
-        'gnd': gnd,
-        'imlist': imlist,
-        'qimlist': qimlist,
-        'positives': positives
-    }
-
     # 定义图像加载函数
     def load_image(img_info):
         idx, name, is_query = img_info
@@ -270,28 +160,32 @@ def load_copydays(data_dir='./data', transform=None, simulate_images=True, num_w
     missing_db_images = 0
     
     # 多线程加载查询图像
-    print("多线程加载查询图像...")
+    query_start_time = time.time()
+    print(f"\n▶ 正在使用 {num_workers} 个线程加载查询图像...")
     with concurrent.futures.ThreadPoolExecutor(max_workers=num_workers) as executor:
-        future_to_idx = {executor.submit(load_image, task): task[0] for task in query_tasks}
-        
-        for future in tqdm(concurrent.futures.as_completed(future_to_idx), total=len(query_tasks)):
+        futures = [executor.submit(load_image, task) for task in query_tasks]
+        for future in tqdm(concurrent.futures.as_completed(futures), total=len(query_tasks)):
             idx, img, path, is_missing = future.result()
             query_images[idx] = img
             query_paths[idx] = path
             if is_missing:
                 missing_query_images += 1
+    query_time = time.time() - query_start_time
+    print(f"查询图像加载耗时: {query_time:.2f}秒 ({len(query_tasks)}张图像)")
     
     # 多线程加载数据库图像
-    print("多线程加载数据库图像...")
+    db_start_time = time.time()
+    print(f"\n▶ 正在使用 {num_workers} 个线程加载数据库图像...")
     with concurrent.futures.ThreadPoolExecutor(max_workers=num_workers) as executor:
-        future_to_idx = {executor.submit(load_image, task): task[0] for task in db_tasks}
-        
-        for future in tqdm(concurrent.futures.as_completed(future_to_idx), total=len(db_tasks)):
+        futures = [executor.submit(load_image, task) for task in db_tasks]
+        for future in tqdm(concurrent.futures.as_completed(futures), total=len(db_tasks)):
             idx, img, path, is_missing = future.result()
             db_images[idx] = img
             db_paths[idx] = path
             if is_missing:
                 missing_db_images += 1
+    db_time = time.time() - db_start_time
+    print(f"数据库图像加载耗时: {db_time:.2f}秒 ({len(db_tasks)}张图像)")
     
     # 移除None值（加载失败且不模拟的情况）
     query_images = [img for img in query_images if img is not None]
@@ -319,6 +213,7 @@ def load_copydays(data_dir='./data', transform=None, simulate_images=True, num_w
         print("警告: 没有加载任何数据库图像!")
     
     # 构建正样本和负样本对
+    positive_start_time = time.time()
     positives = []  # 存储(查询索引, 正样本索引)对
     
     for q_idx, variants in enumerate(gnd):
@@ -326,6 +221,16 @@ def load_copydays(data_dir='./data', transform=None, simulate_images=True, num_w
         for variant_type in ['strong', 'crops', 'jpegqual']:
             for db_idx in variants[variant_type]:
                 positives.append((q_idx, db_idx))
+    
+    positive_time = time.time() - positive_start_time
+    print(f"正样本对构建耗时: {positive_time:.2f}秒 (共{len(positives)}对)")
+    
+    # 计算总耗时
+    total_time = time.time() - start_time
+    print(f"Copydays 数据集加载完成，总耗时: {total_time:.2f}秒")
+    print(f"- 查询图像: {len(query_images)}张")
+    print(f"- 数据库图像: {len(db_images)}张")
+    print(f"- 正样本对: {len(positives)}对")
     
     return {
         'query_images': query_images,
