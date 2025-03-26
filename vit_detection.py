@@ -3,7 +3,7 @@ import torch.nn as nn
 from torchvision import models, transforms
 import numpy as np
 from PIL import Image
-
+from sklearn.decomposition import PCA
 class ViTFeatureExtractor:
     def __init__(self, model_name="vit_b_16"):
         """
@@ -98,7 +98,7 @@ def vit_hash(img, hash_size=8):
     
     # 提取特征
     features = vit_hash.extractor.extract_features(img)
-    
+    features = features.flatten()
     # 如果需要，可以使用PCA或其他方法降维到指定的hash_size
     # 这里简单地取前hash_size*hash_size个元素
     if hash_size * hash_size < len(features):
