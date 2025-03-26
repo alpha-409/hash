@@ -3,6 +3,11 @@ import torch.nn as nn
 from torchvision import models, transforms
 import numpy as np
 from PIL import Image
+import tensorly as tl
+from tensorly.decomposition import tucker
+
+# 设置tensorly后端为PyTorch
+tl.set_backend('pytorch')
 
 class ViTFeatureExtractor:
     def __init__(self, model_name="vit_b_16"):
@@ -81,6 +86,88 @@ class ViTFeatureExtractor:
         
         return features
 
+class ViTTensorHashExtractor(ViTFeatureExtractor):
+    def __init__(self, model_name="vit_b_16", ranks=(4, 4, 4)):
+        super().__init__(model_name)
+        self.ranks = ranks  # Tucker分解的秩
+        self.layer_features = []  # 存储中间层特征
+        self._register_hooks()  # 注册钩子获取中间层特征
+
+    def _register_hooks(self):
+        """注册钩子获取中间Transformer层的特征"""
+        def hook_fn(module, input, output):
+            # 获取每个Transformer层的输出特征
+            cls_token = output[:, 0]  # [batch_size, dim]
+            patch_tokens = output[:, 1:]  # [batch_size, num_patches, dim]
+            pooled = patch_tokens.mean(dim=1)  # 空间维度池化
+            self.layer_features.append(pooled.detach())
+
+        # 注册钩子（示例：获取前12个Encoder层）
+        for i, layer in enumerate(self.model.encoder.layers):
+            if i < 12:  # 选择前12层
+                layer.register_forward_hook(hook_fn)
+
+    def extract_tensor_features(self, img):
+        """提取多层特征并构造3D张量"""
+        self.layer_features = []  # 清空历史特征
+        
+        # 预处理并前向传播
+        if isinstance(img, Image.Image):
+            img = self.preprocess(img)
+        if isinstance(img, torch.Tensor) and img.dim() == 3:
+            img = img.unsqueeze(0)
+        img = img.to(self.device)
+        
+        with torch.no_grad():
+            _ = self.model(img)  # 触发钩子收集特征
+        
+        # 将特征转移到CPU并转换为NumPy数组
+        features = [f.cpu().numpy() for f in self.layer_features]
+        
+        # 构造3D张量 (layers×features×dims)
+        tensor = np.stack(features)
+        return tensor
+
+    def generate_tensor_hash(self, img, hash_size=64):
+        """基于张量分解的哈希生成"""
+        # 1. 提取特征张量
+        tensor = self.extract_tensor_features(img)
+        
+        # 2. 转换为PyTorch张量进行Tucker分解
+        tensor = torch.tensor(tensor, dtype=torch.float32)
+        
+        # 3. Tucker分解降维
+        core, _ = tucker(tensor, rank=self.ranks)
+        core_vector = core.flatten().cpu().numpy()  # 展平为向量
+        
+        # 4. 动态阈值二值化
+        threshold = np.percentile(core_vector, 60)  # 使用60百分位数
+        hash_code = (core_vector > threshold).astype(np.uint8)
+        
+        # 5. 截断到目标长度
+        if len(hash_code) > hash_size:
+            # 选择方差最大的位
+            importance = np.abs(core_vector - threshold)
+            top_indices = np.argsort(importance)[-hash_size:]
+            selected_hash = np.zeros(hash_size, dtype=np.uint8)
+            for i, idx in enumerate(sorted(top_indices)):
+                selected_hash[i] = hash_code[idx]
+            hash_code = selected_hash
+        elif len(hash_code) < hash_size:
+            # 填充到指定长度
+            padding = np.zeros(hash_size - len(hash_code), dtype=np.uint8)
+            hash_code = np.concatenate([hash_code, padding])
+        
+        return hash_code.astype(bool)
+
+# 修改原有vit_hash函数
+def vit_tensor_hash(img, hash_size=64):
+    """基于张量分解的ViT哈希生成函数"""
+    if not hasattr(vit_tensor_hash, 'extractor'):
+        vit_tensor_hash.extractor = ViTTensorHashExtractor(ranks=(4, 4, 4))
+    return vit_tensor_hash.extractor.generate_tensor_hash(img, hash_size)
+
+# 保持原有vit_hash函数不变，添加新函数
 def vit_hash(img, hash_size=8):
     """
     使用ViT提取特征并生成哈希
@@ -150,4 +237,16 @@ def compute_vit_distance(feature1, feature2):
     similarity = np.dot(feature1, feature2)
     # 转换为距离（值越小表示越相似）
     distance = 1.0 - similarity
+    return distance
+
+# 添加张量哈希距离计算函数
+def compute_vit_tensor_distance(hash1, hash2):
+    """计算两个张量哈希之间的汉明距离"""
+    # 确保输入是布尔数组
+    if not isinstance(hash1, np.ndarray) or not isinstance(hash2, np.ndarray):
+        hash1 = np.array(hash1, dtype=bool)
+        hash2 = np.array(hash2, dtype=bool)
+    
+    # 计算汉明距离
+    distance = np.sum(hash1 != hash2) / len(hash1)
     return distance
