@@ -17,6 +17,7 @@ from evaluate import evaluate_hash
 from saliency_tensor_hash import saliency_tensor_hash, compute_saliency_tensor_distance
 # 导入新的视觉显著性哈希算法
 from visual_salient_hash import visual_salient_hash, visual_salient_deep, compute_visual_salient_deep_distance
+from vit_detection import vit_tensor_hash, compute_vit_tensor_distance
 
 def main():
     parser = argparse.ArgumentParser(description='评估图像哈希算法')
@@ -66,6 +67,8 @@ def main():
         'multiscale-deep': {'name': 'Multiscale ResNet50 Deep Features', 'func': multiscale_deep, 'is_deep': True, 'distance_func': compute_multiscale_distance},
         'vit-hash': {'name': 'ViT Hash', 'func': vit_hash, 'is_deep': False, 'distance_func': None},
         'vit-deep': {'name': 'ViT Deep Features', 'func': vit_deep, 'is_deep': True, 'distance_func': compute_vit_distance},
+        # 添加新的ViT张量哈希算法
+        'vit-tensor-hash': {'name': 'ViT Tensor Hash', 'func': vit_tensor_hash, 'is_deep': False, 'distance_func': compute_vit_tensor_distance},
         'contrastive-hash': {'name': 'Contrastive Learning Hash', 'func': contrastive_hash, 'is_deep': False, 'distance_func': None},
         'contrastive-deep': {'name': 'Contrastive Learning Deep Features', 'func': contrastive_deep, 'is_deep': True, 'distance_func': compute_contrastive_distance},
         'itq-hash': {'name': 'ITQ Hash', 'func': itq_hash, 'is_deep': False, 'distance_func': None},
