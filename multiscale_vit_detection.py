@@ -96,7 +96,7 @@ EXPECTED_SIZE = 224  # ViT模型要求的输入尺寸
 def get_extractor():
     global _extractor
     if _extractor is None:
-        _extractor = ViTFeatureExtractor(model_name="vit_b_16", minimal_preprocess=True)
+        _extractor = ViTFeatureExtractor(model_name="vit_l_16", minimal_preprocess=True)
     return _extractor
 
 def adjust_tensor_size(img_tensor):
