@@ -100,7 +100,7 @@ def resnet_hash(img, hash_size=8):
     
     # 提取原始特征
     # 提取特征
-    features = vit_hash.extractor.extract_features(img)
+    features = resnet_hash.extractor.extract_features(img)
     features = features.flatten()
     
     # 如果需要，可以使用PCA或其他方法降维到指定的hash_size

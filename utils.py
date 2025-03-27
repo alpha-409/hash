@@ -242,3 +242,41 @@ def load_copydays(data_dir='./data', transform=None, simulate_images=True, num_w
         'qimlist': qimlist,
         'positives': positives
     }
+# 在utils.py中添加以下内容
+import torch
+from torch.utils.data import Dataset, DataLoader
+
+class ContrastiveDataset(Dataset):
+    def __init__(self, data_dict, neg_samples=5):
+        """
+        对比学习数据集
+        参数:
+            data_dict: load_data返回的数据字典
+            neg_samples: 每个正样本对应的负样本数
+        """
+        self.query_images = data_dict['query_images']
+        self.db_images = data_dict['db_images']
+        self.positives = data_dict['positives']
+        self.neg_samples = neg_samples
+        self.db_size = len(self.db_images)
+
+    def __len__(self):
+        return len(self.positives) * (self.neg_samples + 1)
+
+    def __getitem__(self, idx):
+        # 获取正样本对
+        pos_pair = self.positives[idx // (self.neg_samples + 1)]
+        q_idx, pos_idx = pos_pair
+        
+        # 获取负样本
+        if idx % (self.neg_samples + 1) != 0:
+            neg_idx = torch.randint(0, self.db_size, (1,)).item()
+            while neg_idx in [p[1] for p in self.positives if p[0] == q_idx]:
+                neg_idx = torch.randint(0, self.db_size, (1,)).item()
+            return self.query_images[q_idx], self.db_images[neg_idx], 0  # 负样本标签为0
+        else:
+            return self.query_images[q_idx], self.db_images[pos_idx], 1  # 正样本标签为1
+
+def build_dataloader(data_dict, batch_size=32):
+    dataset = ContrastiveDataset(data_dict)
+    return DataLoader(dataset, batch_size=batch_size, shuffle=True)

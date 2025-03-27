@@ -11,7 +11,10 @@ from image_hash import (
 from resnet_detection import resnet_hash, resnet_deep, compute_resnet_deep_distance
 from multiscale_detection import multiscale_hash, multiscale_deep, compute_multiscale_distance
 from vit_detection import vit_hash, vit_deep, compute_vit_distance
-from contrastive_detection import contrastive_hash, contrastive_deep, compute_contrastive_distance
+from contrastive_detection import (
+    contrastive_hash,  compute_contrastive_distance,
+    tensor_hash, generate_tensor_hash
+)
 from itq_hash import itq_hash, itq_deep, compute_itq_distance  # 添加ITQ哈希方法
 from evaluate import evaluate_hash
 from saliency_tensor_hash import saliency_tensor_hash, compute_saliency_tensor_distance
@@ -23,9 +26,10 @@ def main():
     parser.add_argument('--data_dir', type=str, default='./data', help='数据目录')
     parser.add_argument('--hash_size', type=int, default=8, help='哈希大小')
     parser.add_argument('--output_dir', type=str, default='./results', help='结果输出目录')
+    # 修改算法帮助文本
     parser.add_argument('--algorithms', type=str, nargs='+', 
-                        default=['all'], 
-                        help='要评估的算法，可选: aHash, pHash, dHash, wHash, cHash, mhHash, resnet-hash, resnet-deep, multiscale-hash, multiscale-deep, vit-hash, vit-deep, contrastive-hash, contrastive-deep, visual-salient-hash, visual-salient-deep, all')
+                    default=['all'], 
+                    help='要评估的算法，可选: aHash, pHash, dHash, wHash, cHash, mhHash, resnet-hash, resnet-deep, multiscale-hash, multiscale-deep, vit-hash, vit-deep, contrastive-hash, contrastive-deep, tensor-hash, generate-tensor-hash, visual-salient-hash, visual-salient-deep, all')
     parser.add_argument('--scales', type=float, nargs='+', 
                         default=[1.0, 0.75, 0.5], 
                         help='多尺度特征提取的缩放比例')
@@ -63,7 +67,9 @@ def main():
         'vit-hash': {'name': 'ViT Hash', 'func': vit_hash, 'is_deep': False, 'distance_func': None},
         'vit-deep': {'name': 'ViT Deep Features', 'func': vit_deep, 'is_deep': True, 'distance_func': compute_vit_distance},
         'contrastive-hash': {'name': 'Contrastive Learning Hash', 'func': contrastive_hash, 'is_deep': False, 'distance_func': None},
-        'contrastive-deep': {'name': 'Contrastive Learning Deep Features', 'func': contrastive_deep, 'is_deep': True, 'distance_func': compute_contrastive_distance},
+        # 'contrastive-deep' 项已被移除
+        'tensor-hash': {'name': '张量分解哈希', 'func': tensor_hash, 'is_deep': False, 'distance_func': None},
+        'generate-tensor-hash': {'name': '多尺度张量分解哈希', 'func': generate_tensor_hash, 'is_deep': False, 'distance_func': None},
         'itq-hash': {'name': 'ITQ Hash', 'func': itq_hash, 'is_deep': False, 'distance_func': None},
         'itq-deep': {'name': 'ITQ Deep Features', 'func': itq_deep, 'is_deep': True, 'distance_func': compute_itq_distance},
         # 'saliency-tensor-hash': {'name': '显著性张量哈希', 'func': saliency_tensor_hash, 'is_deep': False, 'distance_func': compute_saliency_tensor_distance},
