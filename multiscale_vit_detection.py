@@ -1,13 +1,21 @@
 import torch
 import torch.nn as nn
-import numpy as np
+import torch.nn.functional as F
 from torchvision import models, transforms
+import numpy as np
 from PIL import Image
-from torch.nn import functional as F
 
+# 定义ViT特征提取器，增加 minimal_preprocess 选项用于多尺度场景
 class ViTFeatureExtractor:
-    def __init__(self, model_name="vit_b_16", train=False):
-        # 加载预训练的 Vision Transformer 模型
+    def __init__(self, model_name="vit_b_16", minimal_preprocess=False):
+        """
+        初始化ViT特征提取器，使用torchvision模型
+
+        参数:
+            model_name (str): 模型名称，可选: vit_b_16, vit_b_32, vit_l_16, vit_l_32
+            minimal_preprocess (bool): 是否使用最小预处理（仅转换为Tensor并归一化），默认为False（使用固定尺寸）
+        """
+        # 加载预训练的ViT模型
         if model_name == "vit_b_16":
             self.model = models.vit_b_16(weights=models.ViT_B_16_Weights.IMAGENET1K_V1)
         elif model_name == "vit_b_32":
@@ -17,210 +25,213 @@ class ViTFeatureExtractor:
         elif model_name == "vit_l_32":
             self.model = models.vit_l_32(weights=models.ViT_L_32_Weights.IMAGENET1K_V1)
         else:
-            raise ValueError(f"Unsupported model name: {model_name}")
-        
-        # 保存模型输出的特征维度
-        self.feature_dim = self.model.hidden_dim
+            raise ValueError(f"不支持的模型名称: {model_name}")
+
         # 移除分类头，只保留特征提取部分
+        self.feature_dim = self.model.hidden_dim
         self.model.heads = nn.Identity()
-        
-        # 根据 train 参数设置模型模式
-        if train:
-            self.model.train()
-        else:
-            self.model.eval()
-        
-        # 检查 GPU 是否可用，并移动模型到对应设备
+
+        # 设置为评估模式
+        self.model.eval()
+
+        # 移动到GPU（如果可用）
         self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
         self.model = self.model.to(self.device)
-        
-        # 图像预处理流程：缩放、中心裁剪、转为 Tensor、归一化
-        self.preprocess = transforms.Compose([
-            transforms.Resize(224),
-            transforms.CenterCrop(224),
-            transforms.ToTensor(),
-            transforms.Normalize(mean=[0.485, 0.456, 0.406], 
-                                 std=[0.229, 0.224, 0.225])
-        ])
-    
+
+        # 图像预处理：
+        # 默认情况下，使用固定尺寸（Resize+CenterCrop）；在多尺度场景下，选择 minimal_preprocess（仅ToTensor和Normalize）
+        if minimal_preprocess:
+            self.preprocess = transforms.Compose([
+                transforms.ToTensor(),
+                transforms.Normalize(mean=[0.485, 0.456, 0.406],
+                                     std=[0.229, 0.224, 0.225])
+            ])
+        else:
+            self.preprocess = transforms.Compose([
+                transforms.Resize(224),
+                transforms.CenterCrop(224),
+                transforms.ToTensor(),
+                transforms.Normalize(mean=[0.485, 0.456, 0.406],
+                                     std=[0.229, 0.224, 0.225])
+            ])
+
     def extract_features(self, img):
-        # 如果输入为 PIL.Image，则预处理
+        """
+        从图像中提取ViT特征
+
+        参数:
+            img: PIL图像或张量
+
+        返回:
+            特征向量（已归一化）
+        """
+        # 如果输入是PIL图像，进行预处理
         if isinstance(img, Image.Image):
             img = self.preprocess(img)
-        
-        # 如果输入为 Tensor 且不在批次格式中，添加 batch 维度
+        # 如果输入是张量但没有 batch 维度，则添加 batch 维度
         if isinstance(img, torch.Tensor) and img.dim() == 3:
             img = img.unsqueeze(0)
-        
-        # 将图像移动到设备（GPU 或 CPU）
+        # 移动到对应设备
         img = img.to(self.device)
-        
-        # 前向传播获取特征，训练或评估均可
+        # 前向传播
         with torch.no_grad():
             features = self.model(img)
-        
-        # 将特征转换为 numpy 数组
+        # 转换为NumPy数组
         features = features.cpu().numpy()
-        
-        # 如果只有一个样本，则去除 batch 维度
+        # 如果是批次，则返回第一个样本的特征
         if features.shape[0] == 1:
             features = features.squeeze(0)
-        
         # 归一化特征向量
         features = features / np.linalg.norm(features)
-        
         return features
 
 
-def extract_multiscale_features_vit(img, scales):
+# ---------------- 多尺度特征提取及融合模块 ----------------
+
+# 全局的ViT多尺度特征提取器，避免重复初始化（使用 minimal_preprocess 版本）
+_extractor = None
+
+def get_extractor():
+    global _extractor
+    if _extractor is None:
+        _extractor = ViTFeatureExtractor(model_name="vit_b_16", minimal_preprocess=True)
+    return _extractor
+
+def extract_multiscale_features(img, scales):
     """
-    使用多尺度 ViT 提取特征
-    
+    对输入图像在不同尺度下进行特征提取，并返回特征矩阵
+
     参数:
-        img: 输入图像（PIL.Image 或 Tensor）。
-        scales: 缩放因子列表 (例如：[1.0, 0.75, 0.5])。
-    
+        img: 输入图像，支持 PIL.Image 或 torch.Tensor（形状为 (3, H, W)）
+        scales (list): 尺度因子列表，例如 [1.0, 0.75, 0.5]
+
     返回:
-        numpy.ndarray: 特征矩阵，形状为 (n_scales, feature_dim)。
+        numpy.ndarray: 特征矩阵，形状 (n_scales, feature_dim)
     """
-    extractor = ViTFeatureExtractor()  # 默认使用评估模式
+    extractor = get_extractor()
     features_list = []
-    
+    # 如果输入为 tensor 且存在 batch 维度则移除
+    if isinstance(img, torch.Tensor) and img.dim() == 4:
+        img = img.squeeze(0)
     for scale in scales:
+        # 如果输入为 tensor 格式
         if isinstance(img, torch.Tensor):
-            # 保证输入为批次格式
+            # 确保输入为 (3, H, W)
             if img.dim() == 3:
-                img_tensor = img.unsqueeze(0)
+                img_tensor = img.unsqueeze(0)  # (1, 3, H, W)
             else:
                 img_tensor = img
-            
-            # 先按比例缩放图像，再调整到 224x224 大小
             _, C, H, W = img_tensor.shape
             new_H = max(1, int(H * scale))
             new_W = max(1, int(W * scale))
+            # 使用双线性插值缩放图像
             img_scaled = F.interpolate(img_tensor, size=(new_H, new_W), mode='bilinear', align_corners=False)
-            img_scaled = F.interpolate(img_scaled, size=(224, 224), mode='bilinear', align_corners=False)
             img_scaled = img_scaled.squeeze(0)
-            
+            # 提取特征
             feature = extractor.extract_features(img_scaled)
+        # 如果输入为 PIL.Image 格式
         elif isinstance(img, Image.Image):
-            # 按比例缩放
             w, h = img.size
             new_size = (max(1, int(w * scale)), max(1, int(h * scale)))
-            img_scaled = img.resize(new_size, Image.LANCZOS)
-            # 调整到 ViT 所需的 224x224 尺寸
-            img_scaled = img_scaled.resize((224, 224), Image.LANCZOS)
-            
+            img_scaled = img.resize(new_size, Image.ANTIALIAS)
             feature = extractor.extract_features(img_scaled)
         else:
-            raise ValueError("Unsupported image type. Only PIL.Image or torch.Tensor are supported.")
-        
-        # 如果特征是多维，则扁平化
+            raise ValueError("输入图像类型不受支持，仅支持 PIL.Image 或 torch.Tensor")
+        # 展平为一维向量（如果必要）
         if feature.ndim > 1:
             feature = feature.flatten()
         features_list.append(feature)
-    
     return np.stack(features_list, axis=0)
 
+def fuse_features(features_matrix, hash_length):
+    """
+    融合多尺度特征矩阵，通过 SVD 分解得到融合表示，
+    并根据目标维度（hash_length^2）截断/降维
 
-def multiscale_vit_hash(img, hash_size=8, scales=[1.0, 0.75, 0.5]):
-    """
-    基于多尺度 ViT 特征和矩阵分解生成二值哈希
-    
     参数:
-        img: 输入图像（PIL.Image 或 Tensor）。
-        hash_size: 哈希的边长（例如：8）。
-        scales: 多尺度提取的缩放因子列表。
-    
+        features_matrix (numpy.ndarray): 多尺度特征矩阵，形状 (n_scales, d)
+        hash_length (int): 指定哈希的边长，最终哈希维度为 hash_length * hash_length
+
     返回:
-        numpy.ndarray: 二值哈希向量。
+        numpy.ndarray: 融合后的特征向量
     """
-    features_matrix = extract_multiscale_features_vit(img, scales)
-    
-    # 进行融合和降维（例如，通过奇异值分解）
     U, S, Vt = np.linalg.svd(features_matrix, full_matrices=False)
-    fused_feature = Vt[0]  # 取第一主成分
-    target_dim = hash_size * hash_size
-    
+    # 取第一主成分作为融合特征
+    fused_feature = Vt[0]
+    target_dim = hash_length * hash_length
     if fused_feature.shape[0] > target_dim:
         fused_feature = fused_feature[:target_dim]
-    
+    return fused_feature
+
+def multiscale_hash(img, hash_size=8, scales=[1.0, 0.75, 0.5]):
+    """
+    基于多尺度 ViT 特征和矩阵分解生成二值哈希
+
+    参数:
+        img: 输入图像，支持 PIL.Image 或 torch.Tensor（形状为 (3, H, W)）
+        hash_size (int): 哈希边长，生成的哈希维度为 hash_size^2
+        scales (list): 多尺度因子列表
+
+    返回:
+        numpy.ndarray: 二值哈希向量
+    """
+    # 提取多尺度特征矩阵
+    features_matrix = extract_multiscale_features(img, scales)
+    # 融合多尺度特征并降维到目标维度
+    fused_feature = fuse_features(features_matrix, hash_size)
+    # 采用融合特征的中值作为二值化阈值
     median_val = np.median(fused_feature)
     binary_hash = fused_feature > median_val
     return binary_hash
 
+def multiscale_deep(img, scales=[1.0, 0.75, 0.5]):
+    """
+    基于多尺度 ViT 特征融合生成深度特征向量（归一化后用于相似度计算）
 
-def multiscale_vit_deep(img, scales=[1.0, 0.75, 0.5]):
-    """
-    基于多尺度 ViT 特征生成归一化深度特征向量
-    
     参数:
-        img: 输入图像（PIL.Image 或 Tensor）。
-        scales: 多尺度提取的缩放因子列表。
-    
+        img: 输入图像，支持 PIL.Image 或 torch.Tensor（形状为 (3, H, W)）
+        scales (list): 多尺度因子列表
+
     返回:
-        numpy.ndarray: 归一化后的特征向量。
+        numpy.ndarray: 归一化的深度融合特征向量
     """
-    features_matrix = extract_multiscale_features_vit(img, scales)
-    
-    U, S, Vt = np.linalg.svd(features_matrix, full_matrices=False)
-    fused_feature = Vt[0]  # 取第一主成分
-    
+    features_matrix = extract_multiscale_features(img, scales)
+    # 这里直接采用第一主成分进行融合；融合特征维度为所有尺度特征的维度
+    d = features_matrix.shape[1]
+    # 为了确保降维到一个合理的正方形维度，我们这里取 d 的平方根并取整
+    hash_length = int(np.sqrt(d))
+    fused_feature = fuse_features(features_matrix, hash_length)
+    # 归一化特征向量
     norm = np.linalg.norm(fused_feature)
     if norm > 0:
         fused_feature = fused_feature / norm
-    
     return fused_feature
 
-
-def compute_multiscale_vit_distance(feature1, feature2):
+def compute_multiscale_distance(feature1, feature2):
     """
-    计算两个多尺度 ViT 特征向量之间的余弦距离
-    
+    计算两个多尺度深度特征之间的余弦距离
+
     参数:
-        feature1, feature2: 特征向量 (numpy 数组)。
-    
+        feature1, feature2 (numpy.ndarray): 深度特征向量
+
     返回:
-        float: 余弦距离（值越低表示相似度越高）。
+        float: 余弦距离（值越小表示越相似）
     """
     similarity = np.dot(feature1, feature2) / (np.linalg.norm(feature1) * np.linalg.norm(feature2))
     distance = 1.0 - similarity
     return distance
 
 
-# 示例：如何在 GPU 上进行训练（如果需要训练模式）
+# ---------------- 示例调用 ----------------
 if __name__ == "__main__":
-    # 检查设备信息
-    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-    print("Using device:", device)
-
-    # 加载一张图片示例（请替换为实际图片路径）
-    try:
-        img = Image.open("example.jpg")
-    except Exception as e:
-        print("未能加载图片，请确保 'example.jpg' 文件存在。")
-        img = Image.new("RGB", (256, 256), color='white')
+    # 打开示例图像（确保图像路径正确）
+    img_path = "example.jpg"
+    img = Image.open(img_path).convert("RGB")
     
-    # 创建特征提取器，此处若需要训练模式则设 train=True
-    extractor = ViTFeatureExtractor(train=False)
+    # 生成多尺度二值哈希
+    binary_hash = multiscale_hash(img, hash_size=8, scales=[1.0, 0.75, 0.5])
+    print("二值哈希：", binary_hash)
     
-    # 提取单尺度特征示例
-    features = extractor.extract_features(img)
-    print("提取的特征向量维度:", features.shape)
-    
-    # 提取多尺度特征
-    scales = [1.0, 0.75, 0.5]
-    multiscale_features = extract_multiscale_features_vit(img, scales)
-    print("多尺度特征矩阵形状:", multiscale_features.shape)
-    
-    # 生成二值哈希
-    binary_hash = multiscale_vit_hash(img, hash_size=8, scales=scales)
-    print("二值哈希:", binary_hash)
-    
-    # 生成深度特征向量
-    deep_feature = multiscale_vit_deep(img, scales=scales)
-    print("归一化深度特征向量长度:", deep_feature.shape[0])
-    
-    # 计算两个特征向量间的余弦距离（示例）
-    distance = compute_multiscale_vit_distance(features, deep_feature)
-    print("余弦距离:", distance)
+    # 生成多尺度深度特征向量
+    deep_feature = multiscale_deep(img, scales=[1.0, 0.75, 0.5])
+    print("深度特征向量：", deep_feature)
