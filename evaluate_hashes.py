@@ -68,14 +68,14 @@ def main():
         'vit-deep': {'name': 'ViT Deep Features', 'func': vit_deep, 'is_deep': True, 'distance_func': compute_vit_distance},
         # 'contrastive-hash': {'name': 'Contrastive Learning Hash', 'func': contrastive_hash, 'is_deep': False, 'distance_func': None},
         # 'contrastive-deep' 项已被移除
-        'tensor-hash': {'name': '张量分解哈希', 'func': tensor_hash, 'is_deep': False, 'distance_func': None},
-        'generate-tensor-hash': {'name': '多尺度张量分解哈希', 'func': generate_tensor_hash, 'is_deep': False, 'distance_func': None},
-        'itq-hash': {'name': 'ITQ Hash', 'func': itq_hash, 'is_deep': False, 'distance_func': None},
-        'itq-deep': {'name': 'ITQ Deep Features', 'func': itq_deep, 'is_deep': True, 'distance_func': compute_itq_distance},
+        # 'tensor-hash': {'name': '张量分解哈希', 'func': tensor_hash, 'is_deep': False, 'distance_func': None},
+        # 'generate-tensor-hash': {'name': '多尺度张量分解哈希', 'func': generate_tensor_hash, 'is_deep': False, 'distance_func': None},
+        # 'itq-hash': {'name': 'ITQ Hash', 'func': itq_hash, 'is_deep': False, 'distance_func': None},
+        # 'itq-deep': {'name': 'ITQ Deep Features', 'func': itq_deep, 'is_deep': True, 'distance_func': compute_itq_distance},
         # 'saliency-tensor-hash': {'name': '显著性张量哈希', 'func': saliency_tensor_hash, 'is_deep': False, 'distance_func': compute_saliency_tensor_distance},
         # 添加新的视觉显著性哈希算法
-        'visual-salient-hash': {'name': '视觉显著性哈希', 'func': visual_salient_hash, 'is_deep': False, 'distance_func': None},
-        'visual-salient-deep': {'name': '视觉显著性深度特征', 'func': visual_salient_deep, 'is_deep': True, 'distance_func': compute_visual_salient_deep_distance},
+        # 'visual-salient-hash': {'name': '视觉显著性哈希', 'func': visual_salient_hash, 'is_deep': False, 'distance_func': None},
+        # 'visual-salient-deep': {'name': '视觉显著性深度特征', 'func': visual_salient_deep, 'is_deep': True, 'distance_func': compute_visual_salient_deep_distance},
     }
     
     # 选择要评估的算法
