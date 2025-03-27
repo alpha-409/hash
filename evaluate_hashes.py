@@ -66,7 +66,7 @@ def main():
         'multiscale-deep': {'name': 'Multiscale ResNet50 Deep Features', 'func': multiscale_deep, 'is_deep': True, 'distance_func': compute_multiscale_distance},
         'vit-hash': {'name': 'ViT Hash', 'func': vit_hash, 'is_deep': False, 'distance_func': None},
         'vit-deep': {'name': 'ViT Deep Features', 'func': vit_deep, 'is_deep': True, 'distance_func': compute_vit_distance},
-        'contrastive-hash': {'name': 'Contrastive Learning Hash', 'func': contrastive_hash, 'is_deep': False, 'distance_func': None},
+        # 'contrastive-hash': {'name': 'Contrastive Learning Hash', 'func': contrastive_hash, 'is_deep': False, 'distance_func': None},
         # 'contrastive-deep' 项已被移除
         'tensor-hash': {'name': '张量分解哈希', 'func': tensor_hash, 'is_deep': False, 'distance_func': None},
         'generate-tensor-hash': {'name': '多尺度张量分解哈希', 'func': generate_tensor_hash, 'is_deep': False, 'distance_func': None},
