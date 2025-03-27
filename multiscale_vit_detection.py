@@ -163,7 +163,7 @@ def fuse_features(features_matrix, hash_length):
         fused_feature = fused_feature[:target_dim]
     return fused_feature
 
-def multiscale_hash(img, hash_size=8, scales=[1.0, 0.75, 0.5]):
+def multiscale_vit_hash(img, hash_size=8, scales=[1.0, 0.75, 0.5]):
     """
     基于多尺度 ViT 特征和矩阵分解生成二值哈希
 
@@ -184,7 +184,7 @@ def multiscale_hash(img, hash_size=8, scales=[1.0, 0.75, 0.5]):
     binary_hash = fused_feature > median_val
     return binary_hash
 
-def multiscale_deep(img, scales=[1.0, 0.75, 0.5]):
+def multiscale_vit_deep(img, scales=[1.0, 0.75, 0.5]):
     """
     基于多尺度 ViT 特征融合生成深度特征向量（归一化后用于相似度计算）
 
@@ -207,7 +207,7 @@ def multiscale_deep(img, scales=[1.0, 0.75, 0.5]):
         fused_feature = fused_feature / norm
     return fused_feature
 
-def compute_multiscale_distance(feature1, feature2):
+def compute_multiscale_vit_distance(feature1, feature2):
     """
     计算两个多尺度深度特征之间的余弦距离
 
