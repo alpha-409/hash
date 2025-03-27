@@ -7,7 +7,7 @@ from PIL import Image
 
 # 定义ViT特征提取器，增加 minimal_preprocess 选项用于多尺度场景
 class ViTFeatureExtractor:
-    def __init__(self, model_name="vit_b_16", minimal_preprocess=False):
+    def __init__(self, model_name="vit_b_16", minimal_preprocess=True):
         """
         初始化ViT特征提取器，使用torchvision模型
 
