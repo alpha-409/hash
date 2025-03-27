@@ -104,6 +104,7 @@ def main():
     
     # 打印汇总结果
     print("\n===== 结果汇总 =====")
+    print(f"'hash_size': {args.hash_size}")
     print(f"{'算法':<40} {'mAP':<10} {'μAP':<10}")
     print("-" * 60)
     for name, metrics in results.items():
