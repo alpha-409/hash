@@ -4,10 +4,11 @@ import torch.nn.functional as F
 from torchvision import models, transforms
 import numpy as np
 from PIL import Image
+import torchvision.transforms.functional as TF
 
 # 定义ViT特征提取器，增加 minimal_preprocess 选项用于多尺度场景
 class ViTFeatureExtractor:
-    def __init__(self, model_name="vit_b_16", minimal_preprocess=True):
+    def __init__(self, model_name="vit_b_16", minimal_preprocess=False):
         """
         初始化ViT特征提取器，使用torchvision模型
 
@@ -90,12 +91,58 @@ class ViTFeatureExtractor:
 
 # 全局的ViT多尺度特征提取器，避免重复初始化（使用 minimal_preprocess 版本）
 _extractor = None
+EXPECTED_SIZE = 224  # ViT模型要求的输入尺寸
 
 def get_extractor():
     global _extractor
     if _extractor is None:
         _extractor = ViTFeatureExtractor(model_name="vit_b_16", minimal_preprocess=True)
     return _extractor
+
+def adjust_tensor_size(img_tensor):
+    """
+    调整张量图像的尺寸到 EXPECTED_SIZE x EXPECTED_SIZE，
+    如果尺寸过大则中心裁剪，尺寸过小则填充。
+    参数:
+        img_tensor: 张量，形状 (1, 3, H, W) 或 (3, H, W)
+    返回:
+        调整后的张量，形状 (1, 3, EXPECTED_SIZE, EXPECTED_SIZE)
+    """
+    if img_tensor.dim() == 3:
+        img_tensor = img_tensor.unsqueeze(0)
+    _, C, H, W = img_tensor.shape
+    if H > EXPECTED_SIZE or W > EXPECTED_SIZE:
+        img_tensor = TF.center_crop(img_tensor, (EXPECTED_SIZE, EXPECTED_SIZE))
+    elif H < EXPECTED_SIZE or W < EXPECTED_SIZE:
+        pad_H = EXPECTED_SIZE - H
+        pad_W = EXPECTED_SIZE - W
+        pad_top = pad_H // 2
+        pad_bottom = pad_H - pad_top
+        pad_left = pad_W // 2
+        pad_right = pad_W - pad_left
+        img_tensor = F.pad(img_tensor, (pad_left, pad_right, pad_top, pad_bottom), mode='constant', value=0)
+    return img_tensor
+
+def adjust_pil_size(img, current_size):
+    """
+    调整PIL图像尺寸到 EXPECTED_SIZE x EXPECTED_SIZE，
+    如果尺寸过大则中心裁剪，尺寸过小则粘贴到背景画布中
+    参数:
+        img: PIL.Image 图像
+        current_size: (w, h) 当前尺寸
+    返回:
+        调整后的 PIL.Image 图像，尺寸为 (EXPECTED_SIZE, EXPECTED_SIZE)
+    """
+    w, h = current_size
+    if w > EXPECTED_SIZE or h > EXPECTED_SIZE:
+        img = TF.center_crop(img, (EXPECTED_SIZE, EXPECTED_SIZE))
+    elif w < EXPECTED_SIZE or h < EXPECTED_SIZE:
+        new_img = Image.new("RGB", (EXPECTED_SIZE, EXPECTED_SIZE))
+        offset_x = (EXPECTED_SIZE - w) // 2
+        offset_y = (EXPECTED_SIZE - h) // 2
+        new_img.paste(img, (offset_x, offset_y))
+        img = new_img
+    return img
 
 def extract_multiscale_features(img, scales):
     """
@@ -114,7 +161,7 @@ def extract_multiscale_features(img, scales):
     if isinstance(img, torch.Tensor) and img.dim() == 4:
         img = img.squeeze(0)
     for scale in scales:
-        # 如果输入为 tensor 格式
+        # 针对 tensor 格式
         if isinstance(img, torch.Tensor):
             # 确保输入为 (3, H, W)
             if img.dim() == 3:
@@ -124,20 +171,25 @@ def extract_multiscale_features(img, scales):
             _, C, H, W = img_tensor.shape
             new_H = max(1, int(H * scale))
             new_W = max(1, int(W * scale))
-            # 使用双线性插值缩放图像
+            # 双线性插值缩放图像
             img_scaled = F.interpolate(img_tensor, size=(new_H, new_W), mode='bilinear', align_corners=False)
+            # 调整尺寸到 EXPECTED_SIZE x EXPECTED_SIZE（中心裁剪或填充）
+            img_scaled = adjust_tensor_size(img_scaled)
+            # 移除 batch 维度
             img_scaled = img_scaled.squeeze(0)
             # 提取特征
             feature = extractor.extract_features(img_scaled)
-        # 如果输入为 PIL.Image 格式
+        # 针对 PIL.Image 格式
         elif isinstance(img, Image.Image):
             w, h = img.size
             new_size = (max(1, int(w * scale)), max(1, int(h * scale)))
             img_scaled = img.resize(new_size, Image.ANTIALIAS)
+            # 调整 PIL 图像到 EXPECTED_SIZE x EXPECTED_SIZE
+            img_scaled = adjust_pil_size(img_scaled, new_size)
             feature = extractor.extract_features(img_scaled)
         else:
             raise ValueError("输入图像类型不受支持，仅支持 PIL.Image 或 torch.Tensor")
-        # 展平为一维向量（如果必要）
+        # 如果特征非一维则展平
         if feature.ndim > 1:
             feature = feature.flatten()
         features_list.append(feature)
@@ -198,10 +250,8 @@ def multiscale_vit_deep(img, scales=[1.0, 0.75, 0.5]):
     features_matrix = extract_multiscale_features(img, scales)
     # 这里直接采用第一主成分进行融合；融合特征维度为所有尺度特征的维度
     d = features_matrix.shape[1]
-    # 为了确保降维到一个合理的正方形维度，我们这里取 d 的平方根并取整
     hash_length = int(np.sqrt(d))
     fused_feature = fuse_features(features_matrix, hash_length)
-    # 归一化特征向量
     norm = np.linalg.norm(fused_feature)
     if norm > 0:
         fused_feature = fused_feature / norm
@@ -229,9 +279,9 @@ if __name__ == "__main__":
     img = Image.open(img_path).convert("RGB")
     
     # 生成多尺度二值哈希
-    binary_hash = multiscale_hash(img, hash_size=8, scales=[1.0, 0.75, 0.5])
+    binary_hash = multiscale_vit_hash(img, hash_size=8, scales=[1.0, 0.75, 0.5])
     print("二值哈希：", binary_hash)
     
     # 生成多尺度深度特征向量
-    deep_feature = multiscale_deep(img, scales=[1.0, 0.75, 0.5])
+    deep_feature = multiscale_vit_deep(img, scales=[1.0, 0.75, 0.5])
     print("深度特征向量：", deep_feature)
