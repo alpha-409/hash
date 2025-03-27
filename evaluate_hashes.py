@@ -11,10 +11,10 @@ from image_hash import (
 from resnet_detection import resnet_hash, resnet_deep, compute_resnet_deep_distance
 from multiscale_detection import multiscale_hash, multiscale_deep, compute_multiscale_distance
 from vit_detection import vit_hash, vit_deep, compute_vit_distance
-from contrastive_detection import (
-    contrastive_hash,  compute_contrastive_distance,
-    tensor_hash, generate_tensor_hash
-)
+# from contrastive_detection import (
+#     contrastive_hash,  compute_contrastive_distance,
+#     tensor_hash, generate_tensor_hash
+# )
 from itq_hash import itq_hash, itq_deep, compute_itq_distance  # 添加ITQ哈希方法
 from evaluate import evaluate_hash
 from saliency_tensor_hash import saliency_tensor_hash, compute_saliency_tensor_distance
