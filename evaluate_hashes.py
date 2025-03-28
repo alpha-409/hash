@@ -17,11 +17,11 @@ from multiscale_vit_detection import multiscale_vit_hash, multiscale_vit_deep, c
 #     contrastive_hash,  compute_contrastive_distance,
 #     tensor_hash, generate_tensor_hash
 # )
-from itq_hash import itq_hash, itq_deep, compute_itq_distance  # 添加ITQ哈希方法
+# from itq_hash import itq_hash, itq_deep, compute_itq_distance  # 添加ITQ哈希方法
 from evaluate import evaluate_hash
-from saliency_tensor_hash import saliency_tensor_hash, compute_saliency_tensor_distance
+# from saliency_tensor_hash import saliency_tensor_hash, compute_saliency_tensor_distance
 # 导入新的视觉显著性哈希算法
-from visual_salient_hash import visual_salient_hash, visual_salient_deep, compute_visual_salient_deep_distance
+# from visual_salient_hash import visual_salient_hash, visual_salient_deep, compute_visual_salient_deep_distance
 
 def main():
     parser = argparse.ArgumentParser(description='评估图像哈希算法')
