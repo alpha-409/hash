@@ -1,54 +1,74 @@
 import torch
 import torch.nn as nn
+import torch.optim as optim
+import torchvision.transforms as transforms
 import torchvision.models as models
-from torch.cuda.amp import autocast, GradScaler
-from utils import load_data, build_dataloader  # 假设utils.py在相同目录
+from torch.utils.data import DataLoader, Dataset
+import numpy as np
+from tqdm import tqdm
+import os
 
-# MoCo配置参数
-class Config:
-    dim = 128                 # 特征维度
-    K = 65536                 # 队列大小
-    m = 0.999                 # 动量系数
-    temperature = 0.07        # 温度系数
-    batch_size = 128          # 批大小
-    num_workers = 8           # 数据加载线程数
-    epochs = 100              # 训练轮数
-    lr = 0.03                 # 学习率
+# 数据增强定义
+class TwoCropsTransform:
+    """将图像的两个增强视图组合成一个样本"""
+    def __init__(self, base_transform):
+        self.base_transform = base_transform
 
-# 数据增强策略（MoCo v2）
-class MoCoAugment:
-    def __init__(self):
-        self.transform = transforms.Compose([
-            transforms.RandomResizedCrop(224, scale=(0.2, 1.)),
-            transforms.RandomApply([
-                transforms.ColorJitter(0.4, 0.4, 0.4, 0.1)  # 颜色抖动
-            ], p=0.8),
-            transforms.RandomGrayscale(p=0.2),               # 随机灰度化
-            transforms.RandomHorizontalFlip(),               # 水平翻转
-            transforms.ToTensor(),
-            transforms.Normalize(mean=[0.485, 0.456, 0.406],
-                               std=[0.229, 0.224, 0.225])
-        ])
-    
     def __call__(self, x):
-        return [self.transform(x), self.transform(x)]  # 生成两个增强视图
+        return [self.base_transform(x), self.base_transform(x)]
 
-# MoCo模型定义
+# 自定义对比学习数据集
+class ContrastiveDataset(Dataset):
+    def __init__(self, pil_images, transform=None):
+        self.images = pil_images
+        self.transform = transform
+
+    def __getitem__(self, index):
+        img = self.images[index]
+        if self.transform:
+            views = self.transform(img)
+            return views
+        return img, img
+
+    def __len__(self):
+        return len(self.images)
+
+# 修正后的MoCo模型实现
 class MoCo(nn.Module):
-    def __init__(self, base_encoder, config):
+    def __init__(self, base_encoder, dim=128, K=65536, m=0.999, T=0.07):
         super(MoCo, self).__init__()
-        self.config = config
-        
-        # 初始化编码器
-        self.encoder_q = base_encoder(num_classes=config.dim)
-        self.encoder_k = base_encoder(num_classes=config.dim)
+        self.K = K
+        self.m = m
+        self.T = T
 
-        # 冻结键编码器的梯度
-        for param_k in self.encoder_k.parameters():
+        # 创建编码器并分离特征提取层
+        self.encoder_q = base_encoder(pretrained=True)
+        self.encoder_k = base_encoder(pretrained=True)
+
+        # 分离特征提取器和全连接层
+        self.feature_extractor_q = nn.Sequential(*list(self.encoder_q.children())[:-1])
+        self.feature_extractor_k = nn.Sequential(*list(self.encoder_k.children())[:-1])
+
+        # 修改全连接层为投影头
+        in_features = self.encoder_q.fc.in_features
+        self.projection_q = nn.Sequential(
+            nn.Linear(in_features, in_features),
+            nn.ReLU(),
+            nn.Linear(in_features, dim)
+        )
+        self.projection_k = nn.Sequential(
+            nn.Linear(in_features, in_features),
+            nn.ReLU(),
+            nn.Linear(in_features, dim)
+        )
+
+        # 初始化键编码器
+        for param_q, param_k in zip(self.encoder_q.parameters(), self.encoder_k.parameters()):
+            param_k.data.copy_(param_q.data)
             param_k.requires_grad = False
 
         # 创建队列
-        self.register_buffer("queue", torch.randn(config.dim, config.K))
+        self.register_buffer("queue", torch.randn(dim, K))
         self.queue = nn.functional.normalize(self.queue, dim=0)
         self.register_buffer("queue_ptr", torch.zeros(1, dtype=torch.long))
 
@@ -56,167 +76,175 @@ class MoCo(nn.Module):
     def _momentum_update_key_encoder(self):
         """动量更新键编码器"""
         for param_q, param_k in zip(self.encoder_q.parameters(), self.encoder_k.parameters()):
-            param_k.data = param_k.data * self.config.m + param_q.data * (1. - self.config.m)
+            param_k.data = param_k.data * self.m + param_q.data * (1. - self.m)
 
     @torch.no_grad()
     def _dequeue_and_enqueue(self, keys):
-        """更新队列"""
+        """维护队列"""
         batch_size = keys.shape[0]
         ptr = int(self.queue_ptr)
         
         # 替换队列中的旧数据
-        if ptr + batch_size > self.config.K:
-            self.queue[:, ptr:] = keys.T[:, :self.config.K-ptr]
-            self.queue[:, :(ptr + batch_size - self.config.K)] = keys.T[:, self.config.K-ptr:]
+        if ptr + batch_size > self.K:
+            self.queue[:, ptr:] = keys[:self.K-ptr].T
+            self.queue[:, :(batch_size - (self.K - ptr))] = keys[self.K-ptr:].T
         else:
             self.queue[:, ptr:ptr+batch_size] = keys.T
-        ptr = (ptr + batch_size) % self.config.K
+        
+        ptr = (ptr + batch_size) % self.K
         self.queue_ptr[0] = ptr
 
     def forward(self, im_q, im_k):
-        # 计算查询特征
-        q = self.encoder_q(im_q)  # queries: NxC
+        # 特征提取
+        q_features = self.feature_extractor_q(im_q).flatten(1)
+        q = self.projection_q(q_features)
         q = nn.functional.normalize(q, dim=1)
 
-        # 计算键特征
+        # 键特征
         with torch.no_grad():
-            self._momentum_update_key_encoder()  # 更新键编码器
-            k = self.encoder_k(im_k)  # keys: NxC
+            self._momentum_update_key_encoder()
+            k_features = self.feature_extractor_k(im_k).flatten(1)
+            k = self.projection_k(k_features)
             k = nn.functional.normalize(k, dim=1)
 
-        # 计算对比损失
-        l_pos = torch.einsum('nc,nc->n', [q, k]).unsqueeze(-1)  # 正样本相似度
-        l_neg = torch.einsum('nc,ck->nk', [q, self.queue.clone().detach()])  # 负样本相似度
+        # 计算相似度
+        l_pos = torch.einsum('nc,nc->n', [q, k]).unsqueeze(-1)  # 正样本
+        l_neg = torch.einsum('nc,ck->nk', [q, self.queue.clone().detach()])  # 负样本
 
-        logits = torch.cat([l_pos, l_neg], dim=1) / self.config.temperature
+        logits = torch.cat([l_pos, l_neg], dim=1) / self.T
         labels = torch.zeros(logits.shape[0], dtype=torch.long).cuda()
 
-        loss = nn.CrossEntropyLoss()(logits, labels)
-
-        # 更新队列
         self._dequeue_and_enqueue(k)
 
-        return loss
-
-# 自定义ResNet编码器
-class ResNetEncoder(models.ResNet):
-    def __init__(self, block, layers, num_classes=128):
-        super(ResNetEncoder, self).__init__(block, layers)
-        self.fc = nn.Linear(512 * block.expansion, num_classes)  # 修改最后一层
-
-    def forward(self, x):
-        x = self.conv1(x)
-        x = self.bn1(x)
-        x = self.relu(x)
-        x = self.maxpool(x)
-
-        x = self.layer1(x)
-        x = self.layer2(x)
-        x = self.layer3(x)
-        x = self.layer4(x)
-
-        x = self.avgpool(x)
-        x = torch.flatten(x, 1)
-        x = self.fc(x)
-        return x
-
-def resnet18(**kwargs):
-    return ResNetEncoder(models.resnet.BasicBlock, [2, 2, 2, 2], **kwargs)
+        return logits, labels
 
 # 训练函数
-def train_moco(config):
-    # 加载数据
-    data_dict = load_data('copydays', num_workers=config.num_workers)
-    
-    # 创建数据加载器
-    transform = MoCoAugment()
-    dataset = ContrastiveDatasetMoCo(data_dict, transform=transform)
-    loader = DataLoader(dataset, batch_size=config.batch_size, 
-                       shuffle=True, num_workers=config.num_workers,
-                       pin_memory=True, drop_last=True)
-    
-    # 初始化模型
-    model = MoCo(resnet18, config).cuda()
-    optimizer = torch.optim.SGD(model.parameters(), config.lr,
-                               momentum=0.9, weight_decay=1e-4)
-    scaler = GradScaler()
-    
-    # 训练循环
+def train_moco(model, train_loader, optimizer, criterion, epochs=5):
     best_loss = float('inf')
-    for epoch in range(config.epochs):
+    for epoch in range(epochs):
         model.train()
         total_loss = 0.0
+        progress_bar = tqdm(train_loader, desc=f'Epoch {epoch+1}/{epochs}')
         
-        for im_q, im_k in tqdm(loader, desc=f'Epoch {epoch+1}/{config.epochs}'):
-            im_q = im_q.cuda(non_blocking=True)
-            im_k = im_k.cuda(non_blocking=True)
-
+        for views in progress_bar:
+            im_q, im_k = views[0].cuda(), views[1].cuda()
+            
             optimizer.zero_grad()
+            logits, labels = model(im_q, im_k)
+            loss = criterion(logits, labels)
+            loss.backward()
+            optimizer.step()
             
-            with autocast():
-                loss = model(im_q, im_k)
-            
-            scaler.scale(loss).backward()
-            scaler.step(optimizer)
-            scaler.update()
-            
-            total_loss += loss.item() * im_q.size(0)
+            total_loss += loss.item()
+            progress_bar.set_postfix({'loss': loss.item()})
         
-        avg_loss = total_loss / len(loader.dataset)
-        print(f'Epoch {epoch+1} Average Loss: {avg_loss:.4f}')
-        
-        # 保存最佳模型
+        avg_loss = total_loss / len(train_loader)
         if avg_loss < best_loss:
             best_loss = avg_loss
-            torch.save(model.encoder_q.state_dict(), 'best_moco.pth')
+            torch.save(model.state_dict(), './model/best_moco_512_5000_model.pth')
+            print(f"Saved new best model with loss: {best_loss:.4f}")
+        if epoch == 0 or epoch == epochs - 1:
+            torch.save(model.state_dict(), f'./model/moco_epoch_{epoch+1}_512_model.pth')
+            print(f"Saved model at epoch {epoch+1} with loss: {avg_loss:.4f}")
+
+# 修正后的特征提取函数
+def extract_features(model, dataloader):
+    model.eval()
+    features = []
+    with torch.no_grad():
+        for images in tqdm(dataloader):
+            images = images.cuda()
+            feat = model.feature_extractor_q(images)
+            feat = feat.flatten(1)  # 展平特征
+            features.append(feat.cpu().numpy())
+    return np.concatenate(features)
+
+if __name__ == "__main__":
+    # 加载数据集
+    from utils import load_data
     
-    print(f"Training complete. Best loss: {best_loss:.4f}")
-
-# MoCo专用数据集类
-class ContrastiveDatasetMoCo(Dataset):
-    def __init__(self, data_dict, transform=None):
-        self.all_images = torch.cat([data_dict['query_images'], 
-                                   data_dict['db_images']])
-        self.transform = transform
-
-    def __len__(self):
-        return len(self.all_images)
-
-    def __getitem__(self, idx):
-        img = self.all_images[idx]
-        if self.transform:
-            views = self.transform(img)
-        else:
-            views = [img, img]
-        return views[0], views[1]
-
-# 特征提取函数
-class FeatureExtractor:
-    def __init__(self, ckpt_path='best_moco.pth'):
-        self.model = resnet18(num_classes=Config.dim)
-        state_dict = torch.load(ckpt_path)
-        self.model.load_state_dict(state_dict)
-        self.model.eval().cuda()
-        self.transform = transforms.Compose([
-            transforms.Resize(256),
-            transforms.CenterCrop(224),
-            transforms.ToTensor(),
-            transforms.Normalize(mean=[0.485, 0.456, 0.406],
-                               std=[0.229, 0.224, 0.225])
-        ])
+    # 数据预处理
+    base_transform = transforms.Compose([
+        transforms.Resize(256),
+        transforms.CenterCrop(224),
+        transforms.ToTensor(),
+        transforms.Normalize(mean=[0.485, 0.456, 0.406], 
+                            std=[0.229, 0.224, 0.225])
+    ])
     
-    def extract(self, img_path):
-        img = Image.open(img_path).convert('RGB')
-        img = self.transform(img).unsqueeze(0).cuda()
-        with torch.no_grad():
-            feature = self.model(img)
-        return feature.squeeze().cpu().numpy()
-
-if __name__ == '__main__':
-    config = Config()
-    train_moco(config)
+    contrastive_transform = TwoCropsTransform(transforms.Compose([
+        transforms.RandomResizedCrop(224, scale=(0.2, 1.0)),
+        transforms.RandomApply([
+            transforms.ColorJitter(0.4, 0.4, 0.4, 0.1)
+        ], p=0.8),
+        transforms.RandomGrayscale(p=0.2),
+        transforms.RandomApply([transforms.GaussianBlur(5)], p=0.5),
+        transforms.RandomHorizontalFlip(),
+        transforms.ToTensor(),
+        transforms.Normalize(mean=[0.485, 0.456, 0.406], 
+                            std=[0.229, 0.224, 0.225])
+    ]))
     
-    # 使用示例
-    extractor = FeatureExtractor()
-    features = extractor.extract('test_image.jpg')
-    print(f"提取特征维度: {features.shape}")
+    data = load_data('copydays', transform=base_transform, simulate_images=False)
+    
+    # 创建对比学习数据集
+    to_pil = transforms.ToPILImage()
+    data['query_images'] = [to_pil(img) for img in data['query_images']]
+    data['db_images']= [to_pil(img) for img in data['db_images']]
+    train_dataset = ContrastiveDataset(data['db_images'], transform=contrastive_transform)
+    train_loader = DataLoader(
+        train_dataset,
+        batch_size=512,
+        shuffle=True,
+        num_workers=4,
+        pin_memory=True
+    )
+    
+    # 初始化模型
+    model = MoCo(base_encoder=models.resnet50).cuda()
+    optimizer = optim.SGD(model.parameters(), lr=0.03, weight_decay=1e-4, momentum=0.9)
+    criterion = nn.CrossEntropyLoss()
+    
+    # 训练模型
+    train_moco(model, train_loader, optimizer, criterion, epochs=5)
+    
+    # 特征提取示例
+    test_transform = transforms.Compose([
+        transforms.Resize(256),
+        transforms.CenterCrop(224),
+        transforms.ToTensor(),
+        transforms.Normalize(mean=[0.485, 0.456, 0.406], 
+                            std=[0.229, 0.224, 0.225])
+    ])
+    
+    # 创建特征提取数据集
+    class FeatureDataset(Dataset):
+        def __init__(self, images, transform=None):
+            self.images = images
+            self.transform = transform
+        
+        def __getitem__(self, index):
+            img = self.images[index]
+            if self.transform:
+                img = self.transform(img)
+            return img
+        
+        def __len__(self):
+            return len(self.images)
+    
+    query_feature_dataset = FeatureDataset(data['query_images'], test_transform)
+    db_feature_dataset = FeatureDataset(data['db_images'], test_transform)
+    
+    query_loader = DataLoader(query_feature_dataset, batch_size=157, shuffle=False)
+    db_loader = DataLoader(db_feature_dataset, batch_size=512, shuffle=False)
+    
+    # 加载最佳模型
+    model.load_state_dict(torch.load('./model/best_moco_512_5000_model.pth'))
+    
+    # 提取特征
+    query_features = extract_features(model, query_loader)
+    db_features = extract_features(model, db_loader)
+    
+    # 保存特征
+    np.save('query_features.npy', query_features)
+    np.save('db_features.npy', db_features)
