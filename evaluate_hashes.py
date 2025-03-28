@@ -13,15 +13,10 @@ from multiscale_detection import multiscale_hash, multiscale_deep, compute_multi
 from vit_detection import vit_hash, vit_deep, compute_vit_distance
 # 添加多尺度ViT哈希算法导入
 from multiscale_vit_detection import multiscale_vit_hash, multiscale_vit_deep, compute_multiscale_vit_distance
-# from contrastive_detection import (
-#     contrastive_hash,  compute_contrastive_distance,
-#     tensor_hash, generate_tensor_hash
-# )
-# from itq_hash import itq_hash, itq_deep, compute_itq_distance  # 添加ITQ哈希方法
+# 添加显著性增强ResNet哈希算法导入
+from salient_resnet_detection import salient_resnet_hash, salient_resnet_deep, compute_salient_resnet_deep_distance
+
 from evaluate import evaluate_hash
-# from saliency_tensor_hash import saliency_tensor_hash, compute_saliency_tensor_distance
-# 导入新的视觉显著性哈希算法
-# from visual_salient_hash import visual_salient_hash, visual_salient_deep, compute_visual_salient_deep_distance
 
 def main():
     parser = argparse.ArgumentParser(description='评估图像哈希算法')
@@ -31,7 +26,7 @@ def main():
     # 修改算法帮助文本，添加新的算法选项
     parser.add_argument('--algorithms', type=str, nargs='+', 
                     default=['all'], 
-                    help='要评估的算法，可选: aHash, pHash, dHash, wHash, cHash, mhHash, resnet-hash, resnet-deep, multiscale-hash, multiscale-deep, vit-hash, vit-deep, multiscale-vit-hash, multiscale-vit-deep, contrastive-hash, contrastive-deep, tensor-hash, generate-tensor-hash, visual-salient-hash, visual-salient-deep, all')
+                    help='要评估的算法，可选: aHash, pHash, dHash, wHash, cHash, mhHash, resnet-hash, resnet-deep, multiscale-hash, multiscale-deep, vit-hash, vit-deep, multiscale-vit-hash, multiscale-vit-deep, salient-resnet-hash, salient-resnet-deep, all')
     parser.add_argument('--scales', type=float, nargs='+', 
                         default=[1.0, 0.75, 0.5], 
                         help='多尺度特征提取的缩放比例')
@@ -46,13 +41,7 @@ def main():
     print("加载 Copydays 数据集...")
     data = load_data('copydays', args.data_dir)
     
-    # 定义要评估的哈希算法
-    # 在导入部分添加新的函数
-    # from multiscale_detection import (
-    #     singlescale_hash, singlescale_deep, 
-    #     dualscale_hash, dualscale_deep,
-    #     multiscale_hash, multiscale_deep, compute_multiscale_distance
-    # )
+    
     
     # 在all_hash_algorithms字典中添加新的算法
     all_hash_algorithms = {
@@ -71,17 +60,10 @@ def main():
         # 添加多尺度ViT哈希算法
         'multiscale-vit-hash': {'name': '多尺度ViT哈希', 'func': multiscale_vit_hash, 'is_deep': False, 'distance_func': None},
         'multiscale-vit-deep': {'name': '多尺度ViT深度特征', 'func': multiscale_vit_deep, 'is_deep': True, 'distance_func': compute_multiscale_vit_distance},
-        # 'contrastive-hash': {'name': 'Contrastive Learning Hash', 'func': contrastive_hash, 'is_deep': False, 'distance_func': None},
-        # 'contrastive-deep' 项已被移除
-        # 'tensor-hash': {'name': '张量分解哈希', 'func': tensor_hash, 'is_deep': False, 'distance_func': None},
-        # 'generate-tensor-hash': {'name': '多尺度张量分解哈希', 'func': generate_tensor_hash, 'is_deep': False, 'distance_func': None},
-        # 'itq-hash': {'name': 'ITQ Hash', 'func': itq_hash, 'is_deep': False, 'distance_func': None},
-        # 'itq-deep': {'name': 'ITQ Deep Features', 'func': itq_deep, 'is_deep': True, 'distance_func': compute_itq_distance},
-        # 'saliency-tensor-hash': {'name': '显著性张量哈希', 'func': saliency_tensor_hash, 'is_deep': False, 'distance_func': compute_saliency_tensor_distance},
-        # 添加新的视觉显著性哈希算法
-        # 'visual-salient-hash': {'name': '视觉显著性哈希', 'func': visual_salient_hash, 'is_deep': False, 'distance_func': None},
-        # 'visual-salient-deep': {'name': '视觉显著性深度特征', 'func': visual_salient_deep, 'is_deep': True, 'distance_func': compute_visual_salient_deep_distance},
-    }
+        # 添加显著性增强ResNet哈希算法
+        'salient-resnet-hash': {'name': '显著性增强ResNet哈希', 'func': salient_resnet_hash, 'is_deep': False, 'distance_func': None},
+        'salient-resnet-deep': {'name': '显著性增强ResNet深度特征', 'func': salient_resnet_deep, 'is_deep': True, 'distance_func': compute_salient_resnet_deep_distance},
+        }
     
     # 选择要评估的算法
     hash_algorithms = {}
