@@ -6,6 +6,22 @@ from PIL import Image
 from sklearn.metrics.pairwise import cosine_similarity
 from sklearn.decomposition import PCA
 
+# -------------------------- 预训练显著性模型模块 --------------------------
+class PretrainedSaliencyModel:
+    """加载预训练的DeepGaze II模型"""
+    def __init__(self):
+        self.model = torch.hub.load('MIT-VISSA/saliency', 'DeepGazeII', pretrained=True)
+        self.model.eval()
+        
+        # 设备配置
+        self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+        self.model = self.model.to(self.device)
+    
+    def __call__(self, x):
+        """输入: [B,3,H,W] 输出: [B,1,H,W]"""
+        with torch.no_grad():
+            return self.model(x)["saliency_map"]
+
 # -------------------------- 视觉显著模型模块 --------------------------
 class SaliencyModel(nn.Module):
     """轻量级显著性预测模块（可替换为预训练模型如DeepGaze）"""
@@ -34,7 +50,8 @@ class SalientResNetFeatureExtractor:
         self.model.eval()
         
         # 显著性模型
-        self.saliency_model = SaliencyModel()
+        # self.saliency_model = SaliencyModel()
+        self.saliency_model = PretrainedSaliencyModel()
         self.use_attention = use_attention
         
         # 注册钩子函数
@@ -54,7 +71,8 @@ class SalientResNetFeatureExtractor:
         
         # 图像预处理
         self.preprocess = transforms.Compose([
-            transforms.Resize(256),
+            # transforms.Resize(256),
+            transforms.Resize((256, 256)),  # DeepGaze需要的最小尺寸
             transforms.CenterCrop(224),
             transforms.ToTensor(),
             transforms.Normalize(mean=[0.485, 0.456, 0.406], 
@@ -66,12 +84,26 @@ class SalientResNetFeatureExtractor:
         self.features = output
     
     def _apply_saliency_attention(self, img_tensor):
-        """应用显著性注意力加权"""
+        # """应用显著性注意力加权"""
+        # # 生成显著性图 [B,1,H,W]
+        # saliency_map = self.saliency_model(img_tensor)
+        # # 调整尺寸匹配当前特征层（假设在avgpool层应用）
+        # if self.layer == 'avgpool':
+        #     saliency_map = nn.functional.interpolate(saliency_map, size=(7,7))
+        # # 特征加权
+        # return self.features * saliency_map
+        """应用预训练显著性模型"""
         # 生成显著性图 [B,1,H,W]
         saliency_map = self.saliency_model(img_tensor)
-        # 调整尺寸匹配当前特征层（假设在avgpool层应用）
+        
+        # 调整显著性图尺寸匹配特征层
         if self.layer == 'avgpool':
+            # ResNet avgpool层输出尺寸为7x7
             saliency_map = nn.functional.interpolate(saliency_map, size=(7,7))
+        elif self.layer == 'fc':
+            # 全局平均池化后尺寸为1x1
+            saliency_map = nn.functional.adaptive_avg_pool2d(saliency_map, (1,1))
+        
         # 特征加权
         return self.features * saliency_map
     
