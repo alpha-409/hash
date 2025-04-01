@@ -141,10 +141,10 @@ def train_moco(model, train_loader, optimizer, criterion, epochs=5):
         avg_loss = total_loss / len(train_loader)
         if avg_loss < best_loss:
             best_loss = avg_loss
-            torch.save(model.state_dict(), './model/best_moco_157_5000_model.pth')
+            torch.save(model.state_dict(), './model/best_moco_db_batch64_5000_model.pth')
             print(f"Saved new best model with loss: {best_loss:.4f}")
         if epoch == 0 or epoch == epochs - 1:
-            torch.save(model.state_dict(), f'./model/moco_epoch_{epoch+1}_157_model.pth')
+            torch.save(model.state_dict(), f'./model/moco_epoch_{epoch+1}_db_batch64_model.pth')
             print(f"Saved model at epoch {epoch+1} with loss: {avg_loss:.4f}")
 
 # 修正后的特征提取函数
@@ -191,14 +191,14 @@ if __name__ == "__main__":
     to_pil = transforms.ToPILImage()
     data['query_images'] = [to_pil(img) for img in data['query_images']]
     data['db_images']= [to_pil(img) for img in data['db_images']]
-    train_dataset = ContrastiveDataset(data['query_images'], transform=contrastive_transform)
+    train_dataset = ContrastiveDataset(data['db_images'], transform=contrastive_transform)
     train_loader = DataLoader(
-        train_dataset,
-        batch_size=64,
-        shuffle=True,
-        num_workers=4,
-        pin_memory=True
-    )
+    train_dataset,
+    batch_size=64,  
+    shuffle=True,
+    num_workers=4,
+    pin_memory=True
+)
     
     # 初始化模型
     model = MoCo(base_encoder=models.resnet50).cuda()
@@ -239,12 +239,12 @@ if __name__ == "__main__":
     db_loader = DataLoader(db_feature_dataset, batch_size=64, shuffle=False)
     
     # 加载最佳模型
-    model.load_state_dict(torch.load('./model/best_moco_157_5000_model.pth'))
+    model.load_state_dict(torch.load('./model/best_moco_db_batch64_5000_model.pth'))
     
     # 提取特征
     query_features = extract_features(model, query_loader)
     db_features = extract_features(model, db_loader)
     
     # 保存特征
-    np.save('query_features.npy', query_features)
-    np.save('db_features.npy', db_features)
+    np.save('query_features_dbtrain_batch64.npy', query_features)
+    np.save('db_features_dbtrain_batch64.npy', db_features)
