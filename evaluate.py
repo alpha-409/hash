@@ -150,3 +150,60 @@ def evaluate_hash(hash_func, data, hash_size=8, distance_func=None, is_deep_feat
         μAP = average_precision_score(all_y_true, all_y_score)
     
     return mAP, μAP
+
+
+def evaluate_model(model, dataloader, device):
+    model.eval()
+    all_hashes = []
+    all_labels = []
+    
+    with torch.no_grad():
+        for imgs, labels in dataloader:
+            imgs = imgs.to(device)
+            binary_hash, _, _ = model(imgs)
+            all_hashes.append(binary_hash.cpu().numpy())
+            all_labels.append(labels.numpy())
+    
+    hashes = np.concatenate(all_hashes)
+    labels = np.concatenate(all_labels)
+    
+    # 计算mAP和μAP
+    n_samples = len(hashes)
+    aps = []
+    all_y_true = []
+    all_y_score = []
+    
+    for i in range(n_samples):
+        # 计算当前样本与其他样本的汉明距离
+        distances = np.sum(hashes != hashes[i], axis=1)
+        # 相似性标签 (1表示正样本，0表示负样本)
+        y_true = (labels == labels[i]).astype(int)
+        # 排除自身
+        y_true[i] = 0
+        distances[i] = np.inf
+        
+        # 按距离排序
+        sorted_indices = np.argsort(distances)
+        y_true_sorted = y_true[sorted_indices]
+        y_score_sorted = -distances[sorted_indices]
+        
+        # 计算AP
+        ap = average_precision_score(y_true_sorted, y_score_sorted)
+        aps.append(ap)
+        
+        # 收集μAP计算所需数据
+        all_y_true.extend(y_true)
+        all_y_score.extend(-distances)
+    
+    # 计算mAP
+    mAP = np.mean(aps) if aps else 0.0
+    
+    # 计算μAP
+    if not all_y_true or not all_y_score:
+        print("警告: 没有足够的数据计算μAP!")
+        μAP = 0.0
+    else:
+        μAP = average_precision_score(all_y_true, all_y_score)
+    
+    print(f"mAP: {mAP:.4f}, μAP: {μAP:.4f}")
+    return mAP, μAP
