@@ -323,3 +323,4 @@ def main():
 if __name__ == "__main__":
     main()
 
+# 使用方法，python image_attack.py --input 目录
