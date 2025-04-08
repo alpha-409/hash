@@ -94,7 +94,11 @@ def main():
         if 'salient-resnet' in key:
             # 使用命令行参数指定的显著性算法
             kwargs = {'use_saliency': True, 'saliency_algorithm': args.saliency_algorithm}
-            mAP, μAP = evaluate_hash(hash_func, data, args.hash_size, distance_func, is_deep, **kwargs)
+            # 将kwargs传递给hash_func而不是evaluate_hash
+            mAP, μAP = evaluate_hash(
+                lambda img, hash_size=args.hash_size: hash_func(img, hash_size, **kwargs),
+                data, args.hash_size, distance_func, is_deep
+            )
         else:
             mAP, μAP = evaluate_hash(hash_func, data, args.hash_size, distance_func, is_deep)
             
