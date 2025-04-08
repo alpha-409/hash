@@ -23,6 +23,9 @@ def main():
     parser.add_argument('--data_dir', type=str, default='./data', help='数据目录')
     parser.add_argument('--hash_size', type=int, default=8, help='哈希大小')
     parser.add_argument('--output_dir', type=str, default='./results', help='结果输出目录')
+    # 添加数据集选择参数
+    parser.add_argument('--dataset', type=str, default='copydays', choices=['copydays', 'scid'], 
+                        help='要评估的数据集，可选: copydays, scid')
     # 修改算法帮助文本，添加新的算法选项
     parser.add_argument('--algorithms', type=str, nargs='+', 
                     default=['all'], 
@@ -30,6 +33,9 @@ def main():
     parser.add_argument('--scales', type=float, nargs='+', 
                         default=[1.0, 0.75, 0.5], 
                         help='多尺度特征提取的缩放比例')
+    # 添加显著性算法选择参数
+    parser.add_argument('--saliency_algorithm', type=str, default='SR', choices=['SR', 'FT'],
+                        help='显著性算法选择 (SR: Spectral Residual, FT: Frequency-Tuned)')
     args = parser.parse_args()
     
     # 确保输出目录存在
@@ -38,10 +44,8 @@ def main():
         print(f"已创建结果输出目录: {args.output_dir}")
     
     # 加载数据集
-    print("加载 Copydays 数据集...")
-    data = load_data('copydays', args.data_dir)
-    
-    
+    print(f"加载 {args.dataset.capitalize()} 数据集...")
+    data = load_data(args.dataset, args.data_dir)
     
     # 在all_hash_algorithms字典中添加新的算法
     all_hash_algorithms = {
@@ -85,13 +89,24 @@ def main():
         distance_func = algo_info['distance_func']
         
         print(f"\n评估 {name}...")
-        mAP, μAP = evaluate_hash(hash_func, data, args.hash_size, distance_func, is_deep)
+        
+        # 为显著性增强ResNet算法添加特殊参数处理
+        if 'salient-resnet' in key:
+            # 使用命令行参数指定的显著性算法
+            kwargs = {'use_saliency': True, 'saliency_algorithm': args.saliency_algorithm}
+            mAP, μAP = evaluate_hash(hash_func, data, args.hash_size, distance_func, is_deep, **kwargs)
+        else:
+            mAP, μAP = evaluate_hash(hash_func, data, args.hash_size, distance_func, is_deep)
+            
         results[name] = {'mAP': mAP, 'μAP': μAP}
         print(f"{name} - mAP: {mAP:.4f}, μAP: {μAP:.4f}")
     
     # 打印汇总结果
     print("\n===== 结果汇总 =====")
-    print(f"'hash_size': {args.hash_size}")
+    print(f"数据集: {args.dataset.capitalize()}")
+    print(f"哈希大小: {args.hash_size}")
+    if any('salient-resnet' in key for key in hash_algorithms.keys()):
+        print(f"显著性算法: {args.saliency_algorithm}")
     print(f"{'算法':<40} {'mAP':<10} {'μAP':<10}")
     print("-" * 60)
     for name, metrics in results.items():
@@ -99,45 +114,51 @@ def main():
     
     # 将结果保存到CSV文件
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    csv_filename = os.path.join(args.output_dir, f"hash_evaluation_results_{timestamp}.csv")
+    csv_filename = os.path.join(args.output_dir, f"{args.dataset}_hash_evaluation_results_{timestamp}.csv")
     
     with open(csv_filename, 'w', newline='', encoding='utf-8') as csvfile:
-        fieldnames = ['算法', 'mAP', 'μAP', '哈希大小', '时间戳', '缩放比例']
+        fieldnames = ['算法', 'mAP', 'μAP', '数据集', '哈希大小', '时间戳', '缩放比例', '显著性算法']
         writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
         
         writer.writeheader()
         for name, metrics in results.items():
-            writer.writerow({
+            row_data = {
                 '算法': name,
                 'mAP': f"{metrics['mAP']:.6f}",
                 'μAP': f"{metrics['μAP']:.6f}",
+                '数据集': args.dataset,
                 '哈希大小': args.hash_size,
                 '时间戳': timestamp,
-                '缩放比例': str(args.scales) if 'multiscale' in name.lower() else 'N/A'
-            })
+                '缩放比例': str(args.scales) if 'multiscale' in name.lower() else 'N/A',
+                '显著性算法': args.saliency_algorithm if 'salient' in name.lower() else 'N/A'
+            }
+            writer.writerow(row_data)
     
     print(f"\n结果已保存到: {csv_filename}")
     
     # 创建一个汇总CSV文件，用于追加所有评估结果
-    summary_csv = os.path.join(args.output_dir, "hash_evaluation_summary.csv")
+    summary_csv = os.path.join(args.output_dir, f"{args.dataset}_hash_evaluation_summary.csv")
     file_exists = os.path.isfile(summary_csv)
     
     with open(summary_csv, 'a', newline='', encoding='utf-8') as csvfile:
-        fieldnames = ['算法', 'mAP', 'μAP', '哈希大小', '时间戳', '缩放比例']
+        fieldnames = ['算法', 'mAP', 'μAP', '数据集', '哈希大小', '时间戳', '缩放比例', '显著性算法']
         writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
         
         if not file_exists:
             writer.writeheader()
         
         for name, metrics in results.items():
-            writer.writerow({
+            row_data = {
                 '算法': name,
                 'mAP': f"{metrics['mAP']:.6f}",
                 'μAP': f"{metrics['μAP']:.6f}",
+                '数据集': args.dataset,
                 '哈希大小': args.hash_size,
                 '时间戳': timestamp,
-                '缩放比例': str(args.scales) if 'multiscale' in name.lower() else 'N/A'
-            })
+                '缩放比例': str(args.scales) if 'multiscale' in name.lower() else 'N/A',
+                '显著性算法': args.saliency_algorithm if 'salient' in name.lower() else 'N/A'
+            }
+            writer.writerow(row_data)
     
     print(f"结果已追加到汇总文件: {summary_csv}")
 
