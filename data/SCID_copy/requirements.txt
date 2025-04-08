@@ -1,0 +1,11 @@
+# Core dependencies
+Pillow>=9.0.0      # Image processing
+tqdm>=4.65.0       # Progress bars
+numpy>=1.21.0      # Numerical operations
+torch>=1.10.0      # Deep learning framework
+
+# Development dependencies
+pytest>=7.0.0      # Testing
+pytest-cov>=4.0.0  # Test coverage
+black>=22.0.0      # Code formatting
+pylint>=2.15.0     # Code linting

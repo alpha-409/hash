@@ -1,0 +1,85 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Virtual Environment
+venv/
+ENV/
+.env/
+.venv/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# Project specific
+test_data/
+attacked_images/
+jpg/
+bmp/
+_temp*
+
+# Dataset files
+*.jpg
+*.bmp
+*.png
+*.jpeg
+
+# Exclude ground truth
+!gnd_scid.json
+
+# Test coverage
+.coverage
+htmlcov/
+coverage.xml
+
+# Distribution
+dist/
+build/
+
+# Documentation
+docs/_build/
+docs/doctrees/
+docs/html/
+
+# Logs
+*.log
+logs/
+log/
+
+# Cache
+.cache/
+.pytest_cache/
+
+# MacOS
+.DS_Store
+
+# Windows
+Thumbs.db
+Desktop.ini
+
+# Jupyter Notebook
+.ipynb_checkpoints
+*.ipynb
