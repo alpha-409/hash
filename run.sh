@@ -15,7 +15,7 @@ output_file="output.txt"
 # 遍历每个 hash_size 并执行命令
 for hash_size in "${hash_sizes[@]}"; do
     echo "Executing for hash_size=${hash_size}..." | tee -a $output_file
-    python evaluate_hashes.py --algorithms $algorithms --hash_size $hash_size | tee -a $output_file
+    python evaluate_hashes.py --dataset scid --algorithms $algorithms --hash_size $hash_size | tee -a $output_file
 done
 
 echo "All tasks completed." | tee -a $output_file
