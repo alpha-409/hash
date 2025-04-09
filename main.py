@@ -189,6 +189,123 @@ def main():
     plt.close()
     
     print("训练完成！")
+    
+    # 加载最佳模型进行评估
+    print("\n加载最佳模型进行评估...")
+    best_model_path = os.path.join(config['save_dir'], 'best_model.pth')
+    model.load_state_dict(torch.load(best_model_path)['model_state_dict'])
+    
+    # 创建测试数据集和数据加载器
+    test_dataset = HashDataset(data_dict, transform=transform, is_query=True)
+    test_loader = DataLoader(
+        test_dataset,
+        batch_size=config['batch_size'],
+        shuffle=False,
+        num_workers=4,
+        collate_fn=collate_with_positives
+    )
+    
+    # 评估函数
+    def evaluate(model, test_loader, device, data_dict):
+        model.eval()
+        query_hashes = []
+        query_indices = []
+        db_hashes = []
+        db_indices = []
+        
+        # 获取查询集和数据库集的哈希码
+        with torch.no_grad():
+            # 处理查询集
+            query_dataset = HashDataset(data_dict, transform=transform, is_query=True)
+            query_loader = DataLoader(
+                query_dataset,
+                batch_size=config['batch_size'],
+                shuffle=False,
+                num_workers=4,
+                collate_fn=collate_with_positives
+            )
+            
+            for batch in tqdm(query_loader, desc="处理查询集"):
+                images = batch['images'].to(device)
+                indices = batch['indices']
+                binary_hash, _, _ = model(images, training=False)
+                query_hashes.append(binary_hash.cpu())
+                query_indices.extend(indices)
+            
+            # 处理数据库集
+            db_dataset = HashDataset(data_dict, transform=transform, is_query=False)
+            db_loader = DataLoader(
+                db_dataset,
+                batch_size=config['batch_size'],
+                shuffle=False,
+                num_workers=4,
+                collate_fn=collate_with_positives
+            )
+            
+            for batch in tqdm(db_loader, desc="处理数据库集"):
+                images = batch['images'].to(device)
+                indices = batch['indices']
+                binary_hash, _, _ = model(images, training=False)
+                db_hashes.append(binary_hash.cpu())
+                db_indices.extend(indices)
+        
+        # 合并所有哈希码
+        query_hashes = torch.cat(query_hashes, dim=0)
+        db_hashes = torch.cat(db_hashes, dim=0)
+        
+        # 计算汉明距离矩阵
+        dist_matrix = 0.5 * (config['hash_length'] - query_hashes @ db_hashes.T)
+        
+        # 计算mAP和μAP
+        aps = []
+        precisions = {k: [] for k in [1, 5, 10]}  # 计算top-1, top-5, top-10的precision
+        
+        for i in range(len(query_indices)):
+            q_idx = query_indices[i]
+            # 获取真实相关图像
+            relevant = [p[1] for p in data_dict['positives'] if p[0] == q_idx]
+            if not relevant:
+                continue
+                
+            # 获取排序后的检索结果
+            sorted_indices = np.argsort(dist_matrix[i])
+            retrieved = [db_indices[j] for j in sorted_indices]
+            
+            # 计算AP
+            ap = 0.0
+            correct = 0
+            for k in range(len(retrieved)):
+                if retrieved[k] in relevant:
+                    correct += 1
+                    ap += correct / (k + 1)
+            ap /= len(relevant)
+            aps.append(ap)
+            
+            # 计算precision@k
+            for k in precisions.keys():
+                top_k = retrieved[:k]
+                precisions[k].append(len([x for x in top_k if x in relevant]) / k)
+        
+        # 计算mAP和μAP
+        mAP = np.mean(aps) if aps else 0.0
+        μAP = sum(aps) / len(aps) if aps else 0.0
+        
+        # 计算平均precision@k
+        avg_precisions = {k: np.mean(v) if v else 0.0 for k, v in precisions.items()}
+        
+        return {
+            'mAP': mAP,
+            'μAP': μAP,
+            'precisions': avg_precisions
+        }
+    
+    # 执行评估
+    eval_results = evaluate(model, test_loader, device, data_dict)
+    print(f"\n评估结果:")
+    print(f"mAP: {eval_results['mAP']:.4f}")
+    print(f"μAP: {eval_results['μAP']:.4f}")
+    for k, prec in eval_results['precisions'].items():
+        print(f"Precision@{k}: {prec:.4f}")
 
 if __name__ == "__main__":
     main()

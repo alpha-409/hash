@@ -136,3 +136,15 @@
 2025-04-09 12:26:19,454 [INFO] Epoch 46/50 completed in 1009.38s
 2025-04-09 12:26:19,454 [INFO] Training Loss: 1415.7529
 2025-04-09 12:26:19,454 [INFO] Loss Components: Similarity=1414.4375, Quantization=0.9290, Bit Balance=8.5092
+2025-04-09 12:47:42,360 [INFO] Epoch 47/50 completed in 1282.69s
+2025-04-09 12:47:42,396 [INFO] Training Loss: 1306.9412
+2025-04-09 12:47:42,396 [INFO] Loss Components: Similarity=1305.6111, Quantization=0.9306, Bit Balance=8.6485
+2025-04-09 13:05:04,803 [INFO] Epoch 48/50 completed in 1042.21s
+2025-04-09 13:05:04,803 [INFO] Training Loss: 1079.0847
+2025-04-09 13:05:04,804 [INFO] Loss Components: Similarity=1077.7604, Quantization=0.9306, Bit Balance=8.5896
+2025-04-09 13:21:58,797 [INFO] Epoch 49/50 completed in 1013.80s
+2025-04-09 13:21:58,798 [INFO] Training Loss: 1259.2532
+2025-04-09 13:21:58,798 [INFO] Loss Components: Similarity=1257.9306, Quantization=0.9316, Bit Balance=8.5679
+2025-04-09 13:42:30,353 [INFO] Epoch 50/50 completed in 1231.30s
+2025-04-09 13:42:30,443 [INFO] Training Loss: 1188.3586
+2025-04-09 13:42:30,444 [INFO] Loss Components: Similarity=1187.0312, Quantization=0.9303, Bit Balance=8.6216
