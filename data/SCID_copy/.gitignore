@@ -40,6 +40,7 @@ attacked_images/
 jpg/
 bmp/
 _temp*
+checkpoints/  # 添加这一行来忽略checkpoints目录
 
 # Dataset files
 *.jpg
