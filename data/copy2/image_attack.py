@@ -1,6 +1,7 @@
 import os
 import cv2
 import json
+import pickle
 import numpy as np
 from PIL import Image, ImageFilter, ImageEnhance, ImageDraw
 import argparse
@@ -9,7 +10,7 @@ import random
 
 
 class ImageAttacker:
-    """Class to apply various attacks on images and generate JSON metadata."""
+    """Class to apply various attacks on images and generate JSON and PKL metadata."""
     
     def __init__(self, output_dir=None):
         """Initialize the ImageAttacker.
@@ -21,7 +22,7 @@ class ImageAttacker:
         if output_dir:
             os.makedirs(output_dir, exist_ok=True)
         
-        # Track all processed images for JSON generation
+        # Track all processed images for metadata generation
         self.processed_images = []  # Changed from dict to list
         self.query_images = []  # Store query image names without extension
         self.all_image_list = []  # Store all attacked image names without extension
@@ -268,7 +269,7 @@ class ImageAttacker:
         _, crop_indices = self.apply_cropping(image_path)
         _, strong_indices = self.apply_strong_attacks(image_path)
         
-        # Store results for JSON generation (using indices)
+        # Store results for metadata generation (using indices)
         variant_results = {
             "jpegqual": jpeg_indices,
             "crops": crop_indices,
@@ -280,34 +281,46 @@ class ImageAttacker:
         
         return variant_results
     
-    def generate_json(self, output_path):
-        """Generate JSON file with metadata.
+    def generate_metadata(self, json_path, pkl_path=None):
+        """Generate JSON and PKL metadata files.
         
         Args:
-            output_path: Path to save the JSON file
+            json_path (str): Path to save the JSON file
+            pkl_path (str, optional): Path to save the PKL file. If None, will be derived from json_path.
         """
-        # Create the JSON structure with the new format
+        # If pkl_path not provided, derive it from json_path
+        if pkl_path is None:
+            pkl_path = os.path.splitext(json_path)[0] + '.pkl'
+        
+        # Create the metadata structure
         data = {
             "gnd": self.processed_images,  # Already in the required format with indices
             "imlist": self.attack_images,  # Only attack images, no query images
             "qimlist": self.query_images   # Only query images, without extension
         }
         
-        # Save to file
-        with open(output_path, 'w') as f:
+        # Save to JSON file
+        with open(json_path, 'w') as f:
             json.dump(data, f, indent=2)
         
-        print(f"Generated JSON metadata file: {output_path}")
+        print(f"Generated JSON metadata file: {json_path}")
+        
+        # Save to PKL file
+        with open(pkl_path, 'wb') as f:
+            pickle.dump(data, f, protocol=pickle.HIGHEST_PROTOCOL)
+        
+        print(f"Generated PKL metadata file: {pkl_path}")
         print(f"- Query images: {len(self.query_images)}")
         print(f"- Database images: {len(self.attack_images)}")
 
 
 def main():
     """Main function to parse arguments and run the image attacker."""
-    parser = argparse.ArgumentParser(description="Apply various attacks to images and generate JSON metadata")
+    parser = argparse.ArgumentParser(description="Apply various attacks to images and generate metadata")
     parser.add_argument("--input", "-i", required=True, help="Input image or directory")
     parser.add_argument("--output", "-o", default=None, help="Output directory (if not specified, save in same directory as source)")
     parser.add_argument("--json", "-j", default="dataset_metadata.json", help="Output JSON file path")
+    parser.add_argument("--pkl", "-p", default=None, help="Output PKL file path (if not specified, derive from JSON path)")
     args = parser.parse_args()
     
     # Create the image attacker
@@ -330,8 +343,8 @@ def main():
         print(f"Error: {args.input} is not a valid file or directory")
         return
     
-    # Generate JSON metadata
-    attacker.generate_json(args.json)
+    # Generate metadata files (JSON and PKL)
+    attacker.generate_metadata(args.json, args.pkl)
 
 
 if __name__ == "__main__":

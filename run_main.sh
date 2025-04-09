@@ -1,8 +1,8 @@
 #!/bin/bash
 
 # 定义数据集列表
-datasets=("copydays" "copy2" "scid")
-
+# datasets=("copydays" "copy2" "scid")
+datasets=("copydays" "scid")
 # 定义种子列表（1到5）
 seeds=(1 2 3 4 5)
 
