@@ -248,10 +248,9 @@ def load_copydays(data_dir='./data', transform=None, simulate_images=True, num_w
         'positives': positives
     }
 
-
 def load_scid(data_dir='./data', transform=None, simulate_images=True, num_workers=None):
     """
-    加载 SCID (Smartphone Camera Image Database) 数据集
+    加载 SCID 数据集
     
     参数:
         data_dir (str): 数据目录
@@ -281,15 +280,15 @@ def load_scid(data_dir='./data', transform=None, simulate_images=True, num_worke
     
     # 加载 ground truth 数据
     gnd_start_time = time.time()
-    gnd_path = os.path.join(data_dir, 'SCID', 'gnd_SCID.json')
+    gnd_path = os.path.join(data_dir, 'SCID', 'gnd_scid.pkl')
     
     # 检查 ground truth 文件是否存在
     if not os.path.exists(gnd_path):
         raise FileNotFoundError(f"找不到 ground truth 文件: {gnd_path}")
     
     try:
-        with open(gnd_path, 'r', encoding='utf-8') as f:
-            data = json.load(f)
+        with open(gnd_path, 'rb') as f:
+            data = pickle.load(f)
     except Exception as e:
         raise Exception(f"加载 ground truth 文件时出错: {e}")
     
@@ -297,18 +296,16 @@ def load_scid(data_dir='./data', transform=None, simulate_images=True, num_worke
     print(f"Ground truth 数据加载耗时: {gnd_time:.2f}秒")
     
     # 检查数据格式
-    required_keys = ['gnd', 'imlist']
+    required_keys = ['gnd', 'imlist', 'qimlist']
     for key in required_keys:
         if key not in data:
             raise KeyError(f"ground truth 数据缺少必要的键: {key}")
     
     gnd = data['gnd']
     imlist = data['imlist']
+    qimlist = data['qimlist']
     
-    # 构建查询图像列表 - 所有原始图像
-    qimlist = list(gnd.keys())
-    
-    # 图像目录 - SCID数据集的图像目录
+    # 图像目录 - 修改为正确的图像目录
     img_dir = os.path.join(data_dir, 'SCID', 'jpg')
     
     # 检查图像目录是否存在
@@ -323,7 +320,7 @@ def load_scid(data_dir='./data', transform=None, simulate_images=True, num_worke
     # 定义图像加载函数
     def load_image(img_info):
         idx, name, is_query = img_info
-        img_path = os.path.join(img_dir, name)
+        img_path = os.path.join(img_dir, name + '.jpg')
         
         if os.path.exists(img_path):
             try:
@@ -346,10 +343,10 @@ def load_scid(data_dir='./data', transform=None, simulate_images=True, num_worke
                 return idx, img_tensor, img_path, True  # 使用模拟图像
             return idx, None, img_path, True  # 图像不存在
     
-    # 准备查询图像任务 - 原始图像
+    # 准备查询图像任务
     query_tasks = [(idx, name, True) for idx, name in enumerate(qimlist)]
     
-    # 准备数据库图像任务 - 所有图像（包括原始图像和变形图像）
+    # 准备数据库图像任务
     db_tasks = [(idx, name, False) for idx, name in enumerate(imlist)]
     
     # 初始化结果列表
@@ -418,17 +415,11 @@ def load_scid(data_dir='./data', transform=None, simulate_images=True, num_worke
     positive_start_time = time.time()
     positives = []  # 存储(查询索引, 正样本索引)对
     
-    # 为每个查询图像找到其所有变形版本
-    for q_idx, q_name in enumerate(qimlist):
-        if q_name in gnd:
-            # 获取该查询图像的所有变形版本
-            for variant_type in ['strong', 'crops', 'jpegqual']:
-                if variant_type in gnd[q_name]:
-                    for variant_name in gnd[q_name][variant_type]:
-                        # 在imlist中查找变形图像的索引
-                        if variant_name in imlist:
-                            db_idx = imlist.index(variant_name)
-                            positives.append((q_idx, db_idx))
+    for q_idx, variants in enumerate(gnd):
+        # 对于每个查询图像，收集所有变形版本作为正样本
+        for variant_type in ['strong', 'crops', 'jpegqual']:
+            for db_idx in variants[variant_type]:
+                positives.append((q_idx, db_idx))
     
     positive_time = time.time() - positive_start_time
     print(f"正样本对构建耗时: {positive_time:.2f}秒 (共{len(positives)}对)")
@@ -450,7 +441,6 @@ def load_scid(data_dir='./data', transform=None, simulate_images=True, num_worke
         'qimlist': qimlist,
         'positives': positives
     }
-
 
 def load_copy2(data_dir='./data', transform=None, simulate_images=True, num_workers=None):
     """
@@ -484,15 +474,15 @@ def load_copy2(data_dir='./data', transform=None, simulate_images=True, num_work
     
     # 加载 ground truth 数据
     gnd_start_time = time.time()
-    gnd_path = os.path.join(data_dir, 'copy2', 'gnd_copy2.json')
+    gnd_path = os.path.join(data_dir, 'copy2', 'gnd_copy2.pkl')
     
     # 检查 ground truth 文件是否存在
     if not os.path.exists(gnd_path):
         raise FileNotFoundError(f"找不到 ground truth 文件: {gnd_path}")
     
     try:
-        with open(gnd_path, 'r', encoding='utf-8') as f:
-            data = json.load(f)
+        with open(gnd_path, 'rb') as f:
+            data = pickle.load(f)
     except Exception as e:
         raise Exception(f"加载 ground truth 文件时出错: {e}")
     
@@ -500,32 +490,16 @@ def load_copy2(data_dir='./data', transform=None, simulate_images=True, num_work
     print(f"Ground truth 数据加载耗时: {gnd_time:.2f}秒")
     
     # 检查数据格式
-    required_keys = ['gnd', 'imlist']
+    required_keys = ['gnd', 'imlist', 'qimlist']
     for key in required_keys:
         if key not in data:
             raise KeyError(f"ground truth 数据缺少必要的键: {key}")
     
     gnd = data['gnd']
-    imlist = data.get('imlist', [])
+    imlist = data['imlist']
+    qimlist = data['qimlist']
     
-    # 如果imlist为空，则从gnd构建完整的图像列表
-    if not imlist:
-        # 首先添加所有原始图像
-        imlist = list(gnd.keys())
-        
-        # 然后添加所有变形图像
-        for original_img, variants in gnd.items():
-            for variant_type in ['strong', 'crops', 'jpegqual']:
-                if variant_type in variants:
-                    imlist.extend(variants[variant_type])
-        
-        # 去除重复项
-        imlist = list(set(imlist))
-    
-    # 构建查询图像列表 - 所有原始图像
-    qimlist = list(gnd.keys())
-    
-    # 图像目录 - Copy2数据集的图像目录
+    # 图像目录 - 修改为正确的图像目录
     img_dir = os.path.join(data_dir, 'copy2', 'jpg')
     
     # 检查图像目录是否存在
@@ -540,7 +514,7 @@ def load_copy2(data_dir='./data', transform=None, simulate_images=True, num_work
     # 定义图像加载函数
     def load_image(img_info):
         idx, name, is_query = img_info
-        img_path = os.path.join(img_dir, name)
+        img_path = os.path.join(img_dir, name + '.jpg')
         
         if os.path.exists(img_path):
             try:
@@ -563,10 +537,10 @@ def load_copy2(data_dir='./data', transform=None, simulate_images=True, num_work
                 return idx, img_tensor, img_path, True  # 使用模拟图像
             return idx, None, img_path, True  # 图像不存在
     
-    # 准备查询图像任务 - 原始图像
+    # 准备查询图像任务
     query_tasks = [(idx, name, True) for idx, name in enumerate(qimlist)]
     
-    # 准备数据库图像任务 - 所有图像（包括原始图像和变形图像）
+    # 准备数据库图像任务
     db_tasks = [(idx, name, False) for idx, name in enumerate(imlist)]
     
     # 初始化结果列表
@@ -635,17 +609,11 @@ def load_copy2(data_dir='./data', transform=None, simulate_images=True, num_work
     positive_start_time = time.time()
     positives = []  # 存储(查询索引, 正样本索引)对
     
-    # 为每个查询图像找到其所有变形版本
-    for q_idx, q_name in enumerate(qimlist):
-        if q_name in gnd:
-            # 获取该查询图像的所有变形版本
-            for variant_type in ['strong', 'crops', 'jpegqual']:
-                if variant_type in gnd[q_name]:
-                    for variant_name in gnd[q_name][variant_type]:
-                        # 在imlist中查找变形图像的索引
-                        if variant_name in imlist:
-                            db_idx = imlist.index(variant_name)
-                            positives.append((q_idx, db_idx))
+    for q_idx, variants in enumerate(gnd):
+        # 对于每个查询图像，收集所有变形版本作为正样本
+        for variant_type in ['strong', 'crops', 'jpegqual']:
+            for db_idx in variants[variant_type]:
+                positives.append((q_idx, db_idx))
     
     positive_time = time.time() - positive_start_time
     print(f"正样本对构建耗时: {positive_time:.2f}秒 (共{len(positives)}对)")

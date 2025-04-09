@@ -1,0 +1,102 @@
+--- Configuration ---
+dataset: copydays
+data_dir: ./data
+hash_bits: 64
+cp_rank: 32
+backbone: resnet18
+pretrained: True
+epochs: 50
+batch_size: 32
+lr: 1e-05
+wd: 1e-05
+margin: 0.4
+lambda_sim: 1.0
+lambda_quant: 0.5
+lambda_balance: 0.1
+num_workers: None
+eval_epoch: 5
+output_dir: ./output
+seed: 42
+no_cuda: False
+simulate_images: True
+---------------------
+Loading dataset: copydays...
+Data loaded successfully.
+Training DataLoader created with batch size 32, workers 3.
+Initializing model...
+Model: ScreenHashNet (resnet18 backbone, 64 bits)
+Total Parameters: 4,133,827
+Loss: HashingLoss (margin=0.4, sim=1.0, quant=0.5, bal=0.1)
+Optimizer: AdamW (lr=1e-05, wd=1e-05)
+
+--- Starting Training ---
+
+Epoch 1/50
+--- Configuration ---
+dataset: copydays
+data_dir: ./data
+hash_bits: 64
+cp_rank: 32
+backbone: resnet18
+pretrained: True
+epochs: 50
+batch_size: 32
+lr: 1e-05
+wd: 1e-05
+margin: 0.4
+lambda_sim: 1.0
+lambda_quant: 0.5
+lambda_balance: 0.1
+num_workers: None
+eval_epoch: 5
+output_dir: ./output
+seed: 42
+no_cuda: False
+simulate_images: True
+---------------------
+Loading dataset: copydays...
+Data loaded successfully.
+Training DataLoader created with batch size 32, workers 3.
+Initializing model...
+Model: ScreenHashNet (resnet18 backbone, 64 bits)
+Total Parameters: 4,133,827
+Loss: HashingLoss (margin=0.4, sim=1.0, quant=0.5, bal=0.1)
+Optimizer: AdamW (lr=1e-05, wd=1e-05)
+
+--- Starting Training ---
+
+Epoch 1/50
+--- Configuration ---
+dataset: copydays
+data_dir: ./data
+hash_bits: 64
+cp_rank: 32
+backbone: resnet18
+pretrained: True
+epochs: 50
+batch_size: 32
+lr: 1e-05
+wd: 1e-05
+margin: 0.4
+lambda_sim: 1.0
+lambda_quant: 0.5
+lambda_balance: 0.1
+num_workers: None
+eval_epoch: 5
+output_dir: ./output
+seed: 42
+no_cuda: False
+simulate_images: True
+---------------------
+Loading dataset: copydays...
+Data loaded successfully.
+Training DataLoader created with batch size 32, workers 3.
+Initializing model...
+Model: ScreenHashNet (resnet18 backbone, 64 bits)
+Total Parameters: 4,133,827
+Loss: HashingLoss (margin=0.4, sim=1.0, quant=0.5, bal=0.1)
+Optimizer: AdamW (lr=1e-05, wd=1e-05)
+
+--- Starting Training ---
+
+Epoch 1/50
