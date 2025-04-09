@@ -20,10 +20,10 @@ for dataset in "${datasets[@]}"; do
     # 遍历每个种子值
     for seed in "${seeds[@]}"; do
         echo "运行: dataset=${dataset}, seed=${seed}" | tee -a $log_file
-        echo "命令: python main.py --dataset ${dataset} --epochs 500 --eval_epoch 1 --seed ${seed}" | tee -a $log_file
+        echo "命令: python main.py --dataset ${dataset} --epochs 500 --eval-epoch 1 --seed ${seed}" | tee -a $log_file
         
         # 执行命令并将输出记录到日志文件
-        python main.py --dataset ${dataset} --epochs 500 --eval_epoch 1 --seed ${seed} | tee -a $log_file
+        python main.py --dataset ${dataset} --epochs 500 --eval-epoch 1 --seed ${seed} | tee -a $log_file
         
         echo "-----------------------------------" | tee -a $log_file
     done
