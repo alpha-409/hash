@@ -1,311 +1,343 @@
+# main.py
 import os
-import time
-import numpy as np
 import torch
-import torch.nn as nn
 import torch.optim as optim
 from torch.utils.data import DataLoader
 from torchvision import transforms
-import matplotlib.pyplot as plt
 from tqdm import tqdm
-import logging
+import numpy as np
+import random
+import argparse
+import time
 
-# 导入自定义模块
-from model_code import HashNet, TripletHashLoss
-from training_code import HashDataset, collate_with_positives, train
-from utils import load_data
+# --- Import custom modules ---
+from utils import load_data # Assuming you saved it as utils.py or data_loader.py
+from model import ScreenHashNet, HashingLoss
+from dataset import ImageHashingDataset, collate_fn
+from evaluation import calculate_metrics # Updated import
 
-# 设置随机种子以确保可重复性
-def set_seed(seed=42):
+# --- Configuration ---
+# (parse_args function remains the same)
+def parse_args():
+    parser = argparse.ArgumentParser(description='ScreenHashNet Training and Evaluation')
+    parser.add_argument('--dataset', type=str, default='copydays', help='Dataset name (e.g., copydays, scid)')
+    parser.add_argument('--data-dir', type=str, default='./data', help='Root directory for datasets')
+    parser.add_argument('--hash-bits', type=int, default=64, help='Number of hash bits (L)')
+    parser.add_argument('--cp-rank', type=int, default=32, help='CP decomposition rank (R)')
+    parser.add_argument('--backbone', type=str, default='resnet18', help='DFE backbone (e.g., resnet18, resnet34, resnet50)')
+    parser.add_argument('--pretrained', action='store_true', default=True, help='Use pretrained DFE backbone')
+    parser.add_argument('--no-pretrained', action='store_false', dest='pretrained', help='Do not use pretrained DFE backbone')
+    parser.add_argument('--epochs', type=int, default=50, help='Number of training epochs')
+    parser.add_argument('--batch-size', type=int, default=32, help='Training batch size')
+    parser.add_argument('--lr', type=float, default=1e-5, help='Learning rate') # Lower LR often needed for fine-tuning
+    parser.add_argument('--wd', type=float, default=1e-5, help='Weight decay')
+    parser.add_argument('--margin', type=float, default=0.4, help='Margin for similarity loss') # Adjust this
+    parser.add_argument('--lambda-sim', type=float, default=1.0, help='Weight for similarity loss')
+    parser.add_argument('--lambda-quant', type=float, default=0.5, help='Weight for quantization loss')
+    parser.add_argument('--lambda-balance', type=float, default=0.1, help='Weight for balance loss')
+    parser.add_argument('--num-workers', type=int, default=None, help='DataLoader workers (default: auto)')
+    parser.add_argument('--eval-epoch', type=int, default=5, help='Evaluate every N epochs')
+    parser.add_argument('--output-dir', type=str, default='./output', help='Directory to save checkpoints and results')
+    parser.add_argument('--seed', type=int, default=42, help='Random seed')
+    parser.add_argument('--no-cuda', action='store_true', help='Disable CUDA')
+    parser.add_argument('--simulate-images', action='store_true', default=True, help='Generate dummy images if missing')
+    parser.add_argument('--no-simulate-images', action='store_false', dest='simulate_images')
+
+    return parser.parse_args()
+
+
+# (set_seed function remains the same)
+def set_seed(seed):
+    random.seed(seed)
     np.random.seed(seed)
     torch.manual_seed(seed)
     if torch.cuda.is_available():
         torch.cuda.manual_seed(seed)
         torch.cuda.manual_seed_all(seed)
-    torch.backends.cudnn.deterministic = True
-    torch.backends.cudnn.benchmark = False
+        torch.backends.cudnn.deterministic = True
+        torch.backends.cudnn.benchmark = False
 
-def main():
-    # 设置随机种子
-    set_seed(42)
-    
-    # 配置参数
-    config = {
-        'hash_length': 128,        # 哈希码长度
-        'cp_rank': 32,             # CP分解的秩
-        'batch_size': 32,          # 批次大小
-        'num_epochs': 50,          # 训练周期数
-        'learning_rate': 0.001,    # 学习率
-        'weight_decay': 1e-5,      # 权重衰减
-        'lambda1': 1.0,            # 相似性保持损失权重
-        'lambda2': 0.5,            # 量化损失权重
-        'lambda3': 0.1,            # 比特平衡损失权重
-        'save_dir': 'checkpoints', # 模型保存目录
-        'data_dir': 'copydays',    # 数据目录
-        'detail_channels': 64,     # 细节路径通道数
-        'semantic_channels': 512,  # 语义路径通道数
-    }
-    
-    # 创建保存目录
-    os.makedirs(config['save_dir'], exist_ok=True)
-    
-    # 设置设备
-    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-    print(f"使用设备: {device}")
-    
-    # 数据预处理
-    transform = transforms.Compose([
-        transforms.ToPILImage(),
-        transforms.Resize((224, 224)),
-        transforms.ToTensor(),
-        transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
-    ])
-    
-    # 加载数据
-    print("正在加载数据...")
-    data_dict = load_data(config['data_dir'])
-    
-    # 创建数据集
-    train_dataset = HashDataset(data_dict, transform=transform, is_query=False)
-    
-    # 创建数据加载器
-    train_loader = DataLoader(
-        train_dataset, 
-        batch_size=config['batch_size'],
-        shuffle=True,
-        num_workers=4,
-        collate_fn=collate_with_positives,
-        pin_memory=True
-    )
-    
-    # 初始化模型
-    model = HashNet(
-        hash_length=config['hash_length'],
-        cp_rank=config['cp_rank'],
-        detail_channels=config['detail_channels'],
-        semantic_channels=config['semantic_channels']
-    ).to(device)
-    
-    # 初始化损失函数
-    criterion = TripletHashLoss(
-        lambda1=config['lambda1'],
-        lambda2=config['lambda2'],
-        lambda3=config['lambda3']
-    )
-    
-    # 初始化优化器
-    optimizer = optim.Adam(
-        model.parameters(),
-        lr=config['learning_rate'],
-        weight_decay=config['weight_decay']
-    )
-    
-    # 学习率调度器
-    scheduler = optim.lr_scheduler.ReduceLROnPlateau(
-        optimizer, 
-        mode='min', 
-        factor=0.5, 
-        patience=5, 
-        verbose=True
-    )
-    
-    # 训练记录
-    train_losses = []
-    loss_components_history = {
-        'similarity_loss': [],
-        'quantization_loss': [],
-        'bit_balance_loss': []
-    }
-    
-    # 开始训练
-    print(f"开始训练，共{config['num_epochs']}个周期...")
-    best_loss = float('inf')
-    
-    for epoch in range(1, config['num_epochs'] + 1):
-        # 训练一个周期
-        epoch_loss, loss_components = train(
-            model=model,
-            train_loader=train_loader,
-            optimizer=optimizer,
-            criterion=criterion,
-            device=device,
-            epoch=epoch,
-            total_epochs=config['num_epochs']
-        )
-        
-        # 更新学习率
-        scheduler.step(epoch_loss)
-        
-        # 记录损失
-        train_losses.append(epoch_loss)
-        for key, value in loss_components.items():
-            if key in loss_components_history:
-                loss_components_history[key].append(value)
-        
-        # 保存最佳模型
-        if epoch_loss < best_loss:
-            best_loss = epoch_loss
-            torch.save({
-                'epoch': epoch,
-                'model_state_dict': model.state_dict(),
-                'optimizer_state_dict': optimizer.state_dict(),
-                'loss': epoch_loss,
-            }, os.path.join(config['save_dir'], 'best_model.pth'))
-            print(f"保存最佳模型，损失: {best_loss:.4f}")
-        
-        # 每10个周期保存一次检查点
-        if epoch % 10 == 0:
-            torch.save({
-                'epoch': epoch,
-                'model_state_dict': model.state_dict(),
-                'optimizer_state_dict': optimizer.state_dict(),
-                'loss': epoch_loss,
-            }, os.path.join(config['save_dir'], f'checkpoint_epoch_{epoch}.pth'))
-    
-    # 绘制损失曲线
-    plt.figure(figsize=(12, 8))
-    
-    # 总损失
-    plt.subplot(2, 1, 1)
-    plt.plot(range(1, config['num_epochs'] + 1), train_losses, 'b-', label='Training Loss')
-    plt.title('Training Loss')
-    plt.xlabel('Epoch')
-    plt.ylabel('Loss')
-    plt.legend()
-    plt.grid(True)
-    
-    # 损失组件
-    plt.subplot(2, 1, 2)
-    for key, values in loss_components_history.items():
-        plt.plot(range(1, config['num_epochs'] + 1), values, label=key)
-    plt.title('Loss Components')
-    plt.xlabel('Epoch')
-    plt.ylabel('Loss')
-    plt.legend()
-    plt.grid(True)
-    
-    plt.tight_layout()
-    plt.savefig('training_loss.png')
-    plt.close()
-    
-    print("训练完成！")
-    
-    # 加载最佳模型进行评估
-    print("\n加载最佳模型进行评估...")
-    best_model_path = os.path.join(config['save_dir'], 'best_model.pth')
-    model.load_state_dict(torch.load(best_model_path)['model_state_dict'])
-    
-    # 创建测试数据集和数据加载器
-    test_dataset = HashDataset(data_dict, transform=transform, is_query=True)
-    test_loader = DataLoader(
-        test_dataset,
-        batch_size=config['batch_size'],
-        shuffle=False,
-        num_workers=4,
-        collate_fn=collate_with_positives
-    )
-    
-    # 评估函数
-    def evaluate(model, test_loader, device, data_dict):
-        model.eval()
-        query_hashes = []
-        query_indices = []
-        db_hashes = []
-        db_indices = []
-        
-        # 获取查询集和数据库集的哈希码
-        with torch.no_grad():
-            # 处理查询集
-            query_dataset = HashDataset(data_dict, transform=transform, is_query=True)
-            query_loader = DataLoader(
-                query_dataset,
-                batch_size=config['batch_size'],
-                shuffle=False,
-                num_workers=4,
-                collate_fn=collate_with_positives
-            )
-            
-            for batch in tqdm(query_loader, desc="处理查询集"):
-                images = batch['images'].to(device)
-                indices = batch['indices']
-                binary_hash, _, _ = model(images, training=False)
-                query_hashes.append(binary_hash.cpu())
-                query_indices.extend(indices)
-            
-            # 处理数据库集
-            db_dataset = HashDataset(data_dict, transform=transform, is_query=False)
-            db_loader = DataLoader(
-                db_dataset,
-                batch_size=config['batch_size'],
-                shuffle=False,
-                num_workers=4,
-                collate_fn=collate_with_positives
-            )
-            
-            for batch in tqdm(db_loader, desc="处理数据库集"):
-                images = batch['images'].to(device)
-                indices = batch['indices']
-                binary_hash, _, _ = model(images, training=False)
-                db_hashes.append(binary_hash.cpu())
-                db_indices.extend(indices)
-        
-        # 合并所有哈希码
-        query_hashes = torch.cat(query_hashes, dim=0)
-        db_hashes = torch.cat(db_hashes, dim=0)
-        
-        # 计算汉明距离矩阵
-        dist_matrix = 0.5 * (config['hash_length'] - query_hashes @ db_hashes.T)
-        
-        # 计算mAP和μAP
-        aps = []
-        precisions = {k: [] for k in [1, 5, 10]}  # 计算top-1, top-5, top-10的precision
-        
-        for i in range(len(query_indices)):
-            q_idx = query_indices[i]
-            # 获取真实相关图像
-            relevant = [p[1] for p in data_dict['positives'] if p[0] == q_idx]
-            if not relevant:
-                continue
-                
-            # 获取排序后的检索结果
-            sorted_indices = np.argsort(dist_matrix[i])
-            retrieved = [db_indices[j] for j in sorted_indices]
-            
-            # 计算AP
-            ap = 0.0
-            correct = 0
-            for k in range(len(retrieved)):
-                if retrieved[k] in relevant:
-                    correct += 1
-                    ap += correct / (k + 1)
-            ap /= len(relevant)
-            aps.append(ap)
-            
-            # 计算precision@k
-            for k in precisions.keys():
-                top_k = retrieved[:k]
-                precisions[k].append(len([x for x in top_k if x in relevant]) / k)
-        
-        # 计算mAP和μAP
-        mAP = np.mean(aps) if aps else 0.0
-        μAP = sum(aps) / len(aps) if aps else 0.0
-        
-        # 计算平均precision@k
-        avg_precisions = {k: np.mean(v) if v else 0.0 for k, v in precisions.items()}
-        
-        return {
-            'mAP': mAP,
-            'μAP': μAP,
-            'precisions': avg_precisions
-        }
-    
-    # 执行评估
-    eval_results = evaluate(model, test_loader, device, data_dict)
-    print(f"\n评估结果:")
-    print(f"mAP: {eval_results['mAP']:.4f}")
-    print(f"μAP: {eval_results['μAP']:.4f}")
-    for k, prec in eval_results['precisions'].items():
-        print(f"Precision@{k}: {prec:.4f}")
 
+# (train_one_epoch function remains the same)
+def train_one_epoch(model, loader, optimizer, criterion, device, positive_pairs_lookup):
+    model.train()
+    total_loss_accum = 0.0
+    sim_loss_accum = 0.0
+    quant_loss_accum = 0.0
+    balance_loss_accum = 0.0
+    num_batches = 0
+
+    progress_bar = tqdm(loader, desc='Training', leave=False)
+    for images, S_matrix, _ in progress_bar: # Ignore original indices here
+        images = images.to(device)
+        S_matrix = S_matrix.to(device) # Move S to device
+
+        optimizer.zero_grad()
+        H, tilde_H = model(images)
+        total_loss, loss_dict = criterion(H, tilde_H, S_matrix)
+
+        if torch.isnan(total_loss):
+            print("Warning: NaN loss detected. Skipping batch.")
+            continue # Skip backpropagation if loss is NaN
+
+        total_loss.backward()
+        # Optional: Gradient clipping
+        # torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+        optimizer.step()
+
+        total_loss_accum += loss_dict['total_loss'].item()
+        sim_loss_accum += loss_dict['loss_sim'].item()
+        quant_loss_accum += loss_dict['loss_quant'].item()
+        balance_loss_accum += loss_dict['loss_balance'].item()
+        num_batches += 1
+
+        progress_bar.set_postfix({
+            'Loss': f"{loss_dict['total_loss'].item():.4f}",
+            'Sim': f"{loss_dict['loss_sim'].item():.4f}",
+            'Quant': f"{loss_dict['loss_quant'].item():.4f}",
+            'Bal': f"{loss_dict['loss_balance'].item():.4f}"
+        })
+
+    avg_total_loss = total_loss_accum / num_batches if num_batches > 0 else 0
+    avg_sim_loss = sim_loss_accum / num_batches if num_batches > 0 else 0
+    avg_quant_loss = quant_loss_accum / num_batches if num_batches > 0 else 0
+    avg_balance_loss = balance_loss_accum / num_batches if num_batches > 0 else 0
+
+    return avg_total_loss, avg_sim_loss, avg_quant_loss, avg_balance_loss
+
+
+# --- Evaluation Function ---
+@torch.no_grad()
+def evaluate(model, data_dict, device, hash_bits, batch_size=128): # Added hash_bits arg
+    model.eval()
+
+    query_images = data_dict['query_images']
+    db_images = data_dict['db_images']
+    gnd = data_dict['gnd']
+    qimlist = data_dict['qimlist']
+    imlist = data_dict['imlist']
+
+    num_query = len(query_images) if isinstance(query_images, (list, torch.Tensor)) else 0
+    num_db = len(db_images) if isinstance(db_images, (list, torch.Tensor)) else 0
+
+    # Handle empty datasets gracefully
+    if num_query == 0 or num_db == 0:
+        print("Warning: Query or Database image set is empty. Skipping evaluation.")
+        return {'mAP': 0.0, 'muAP': 0.0}
+
+    query_hashes = torch.zeros(num_query, hash_bits).to(device) # Use hash_bits argument
+    db_hashes = torch.zeros(num_db, hash_bits).to(device) # Use hash_bits argument
+
+    print("Generating Query Hashes...")
+    for i in tqdm(range(0, num_query, batch_size)):
+        end = min(i + batch_size, num_query)
+        # Ensure batch is a tensor before sending to device
+        batch_data = query_images[i:end]
+        if isinstance(batch_data, list):
+             batch_data = torch.stack(batch_data) # Stack if it's still a list of tensors
+        batch = batch_data.to(device)
+        H, _ = model(batch)
+        query_hashes[i:end] = H
+
+    print("Generating Database Hashes...")
+    for i in tqdm(range(0, num_db, batch_size)):
+        end = min(i + batch_size, num_db)
+        # Ensure batch is a tensor
+        batch_data = db_images[i:end]
+        if isinstance(batch_data, list):
+             batch_data = torch.stack(batch_data)
+        batch = batch_data.to(device)
+        H, _ = model(batch)
+        db_hashes[i:end] = H
+
+    # Prepare ground truth
+    query_labels_map = list(range(num_query))
+    db_labels_map = list(range(num_db))
+
+    gnd_map = []
+    for q_idx in range(num_query):
+        relevant_indices = set()
+        if q_idx < len(gnd):
+            q_gnd_info = gnd[q_idx]
+            # Define relevance based on these keys (adjust if necessary)
+            relevant_keys = ['strong', 'crops', 'jpegqual']
+            for key in relevant_keys:
+                if key in q_gnd_info:
+                    # Ensure indices are integers
+                    try:
+                        current_indices = set(map(int, q_gnd_info[key]))
+                        relevant_indices.update(current_indices)
+                    except (ValueError, TypeError) as e:
+                         print(f"Warning: Could not process indices for query {q_idx}, key {key}. Error: {e}. Value: {q_gnd_info[key]}")
+
+        else:
+             print(f"Warning: Query index {q_idx} out of bounds for ground truth list (length {len(gnd)}).")
+        gnd_map.append(relevant_indices)
+
+    print("Calculating Metrics (mAP, μAP)...")
+    # Ensure hashes are on CPU if calculate_metrics expects CPU tensors
+    metrics = calculate_metrics(query_hashes.cpu(), db_hashes.cpu(),
+                                query_labels=query_labels_map,
+                                db_labels=db_labels_map,
+                                gnd_truth=gnd_map,
+                                top_k=None) # Calculate metrics over all results
+
+    return metrics # Return the dictionary
+
+
+# --- Main Execution ---
 if __name__ == "__main__":
-    main()
+    args = parse_args()
+    set_seed(args.seed)
+
+    # --- Device Setup ---
+    use_cuda = not args.no_cuda and torch.cuda.is_available()
+    device = torch.device("cuda" if use_cuda else "cpu")
+    print(f"Using device: {device}")
+
+    # --- Output Directory ---
+    os.makedirs(args.output_dir, exist_ok=True)
+    log_file = os.path.join(args.output_dir, f"log_{args.dataset}_{args.hash_bits}bit.txt")
+
+    def log_message(message):
+        print(message)
+        with open(log_file, 'a') as f:
+            f.write(message + '\n')
+
+    log_message("--- Configuration ---")
+    for arg, value in vars(args).items():
+        log_message(f"{arg}: {value}")
+    log_message("---------------------")
+
+
+    # --- Load Data ---
+    log_message(f"Loading dataset: {args.dataset}...")
+    data_transform = transforms.Compose([
+        transforms.Resize(256),
+        transforms.CenterCrop(224),
+        transforms.ToTensor(),
+        transforms.Normalize(mean=[0.485, 0.456, 0.406],
+                            std=[0.229, 0.224, 0.225])
+    ])
+    try:
+        # Make sure load_data is imported correctly (e.g., from utils)
+        data_dict = load_data(args.dataset, args.data_dir, data_transform,
+                               simulate_images=args.simulate_images,
+                               num_workers=args.num_workers)
+    except FileNotFoundError as e:
+        log_message(f"Error loading data: {e}")
+        log_message("Please ensure the dataset is correctly placed in the specified data directory.")
+        exit(1)
+    except Exception as e:
+        log_message(f"An unexpected error occurred during data loading: {e}")
+        exit(1)
+
+    log_message("Data loaded successfully.")
+
+    # --- Create Dataset and DataLoader ---
+    train_dataset = ImageHashingDataset(data_dict, dataset_type='db')
+    positive_pairs_lookup = train_dataset.positive_pairs_db_indices
+    collate_wrapper = lambda batch: collate_fn(batch, positive_pairs_lookup)
+
+    # Determine optimal num_workers if not specified
+    num_workers = args.num_workers if args.num_workers is not None else min(os.cpu_count() // 2, 8) # Heuristic
+
+    train_loader = DataLoader(
+        train_dataset,
+        batch_size=args.batch_size,
+        shuffle=True,
+        num_workers=num_workers,
+        collate_fn=collate_wrapper,
+        pin_memory=use_cuda, # Use pin_memory if using CUDA
+        persistent_workers=True if num_workers > 0 else False # Can speed up loading
+    )
+    log_message(f"Training DataLoader created with batch size {args.batch_size}, workers {num_workers}.")
+
+
+    # --- Initialize Model, Criterion, Optimizer ---
+    log_message("Initializing model...")
+    model = ScreenHashNet(
+        hash_bits=args.hash_bits,
+        cp_rank=args.cp_rank,
+        dfe_backbone=args.backbone,
+        dfe_pretrained=args.pretrained,
+        use_cuda=use_cuda
+    ).to(device)
+    log_message(f"Model: ScreenHashNet ({args.backbone} backbone, {args.hash_bits} bits)")
+    log_message(f"Total Parameters: {sum(p.numel() for p in model.parameters() if p.requires_grad):,}")
+
+
+    criterion = HashingLoss(
+        lambda_sim=args.lambda_sim,
+        lambda_quant=args.lambda_quant,
+        lambda_balance=args.lambda_balance,
+        sim_margin=args.margin
+    ).to(device)
+    log_message(f"Loss: HashingLoss (margin={args.margin}, sim={args.lambda_sim}, quant={args.lambda_quant}, bal={args.lambda_balance})")
+
+    optimizer = optim.AdamW(model.parameters(), lr=args.lr, weight_decay=args.wd)
+    log_message(f"Optimizer: AdamW (lr={args.lr}, wd={args.wd})")
+
+    # --- Training Loop ---
+    log_message("\n--- Starting Training ---")
+    best_map = 0.0
+    start_train_time = time.time()
+
+    for epoch in range(1, args.epochs + 1):
+        epoch_start_time = time.time()
+        log_message(f"\nEpoch {epoch}/{args.epochs}")
+
+        avg_loss, avg_sim, avg_quant, avg_bal = train_one_epoch(
+            model, train_loader, optimizer, criterion, device, positive_pairs_lookup
+        )
+
+        log_message(f"Epoch {epoch} Training Summary:")
+        log_message(f"  Avg Total Loss: {avg_loss:.4f}")
+        log_message(f"  Avg Sim Loss:   {avg_sim:.4f}")
+        log_message(f"  Avg Quant Loss: {avg_quant:.4f}")
+        log_message(f"  Avg Bal Loss:   {avg_bal:.4f}")
+        log_message(f"  Epoch Time: {time.time() - epoch_start_time:.2f}s")
+
+        # --- Evaluation ---
+        if epoch % args.eval_epoch == 0 or epoch == args.epochs:
+            log_message(f"\n--- Evaluating Epoch {epoch} ---")
+            eval_start_time = time.time()
+            # Pass hash_bits to evaluate function
+            metrics = evaluate(model, data_dict, device, args.hash_bits, batch_size=args.batch_size * 2)
+            current_map = metrics['mAP']
+            current_muap = metrics['muAP'] # Get muAP from the returned dict
+            log_message(f"Epoch {epoch} mAP: {current_map:.4f}, μAP: {current_muap:.4f}") # Log both
+            log_message(f"Evaluation Time: {time.time() - eval_start_time:.2f}s")
+
+            # Save best model (based on mAP)
+            if current_map > best_map:
+                best_map = current_map
+                log_message(f"*** New Best mAP: {best_map:.4f} ***")
+                checkpoint_path = os.path.join(args.output_dir, f"best_model_{args.dataset}_{args.hash_bits}bit.pth")
+                torch.save({
+                    'epoch': epoch,
+                    'model_state_dict': model.state_dict(),
+                    'optimizer_state_dict': optimizer.state_dict(),
+                    'map': best_map, # Save best mAP
+                    'muap': current_muap, # Also save corresponding muAP
+                    'args': args
+                }, checkpoint_path)
+                log_message(f"Best model saved to {checkpoint_path}")
+
+            # Save latest model
+            latest_checkpoint_path = os.path.join(args.output_dir, f"latest_model_{args.dataset}_{args.hash_bits}bit.pth")
+            torch.save({
+                    'epoch': epoch,
+                    'model_state_dict': model.state_dict(),
+                    'optimizer_state_dict': optimizer.state_dict(),
+                    'map': current_map, # Save current mAP
+                    'muap': current_muap, # Save current muAP
+                    'args': args
+                }, latest_checkpoint_path)
+
+    total_training_time = time.time() - start_train_time
+    log_message("\n--- Training Finished ---")
+    log_message(f"Total Training Time: {total_training_time / 3600:.2f} hours")
+    log_message(f"Best mAP achieved: {best_map:.4f}")
+    log_message(f"Results and checkpoints saved in: {args.output_dir}")
+    log_message(f"Log file saved to: {log_file}")
