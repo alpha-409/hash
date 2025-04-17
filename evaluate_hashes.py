@@ -24,7 +24,7 @@ def main():
     parser.add_argument('--hash_size', type=int, default=8, help='哈希大小')
     parser.add_argument('--output_dir', type=str, default='./results', help='结果输出目录')
     # 添加数据集选择参数
-    parser.add_argument('--dataset', type=str, default='copydays', choices=['copydays', 'scid','copy2'], 
+    parser.add_argument('--dataset', type=str, default='copydays', choices=['copydays', 'scid','copy2','screencopynet'], 
                         help='要评估的数据集，可选: copydays, scid,copy2')
     # 修改算法帮助文本，添加新的算法选项
     parser.add_argument('--algorithms', type=str, nargs='+', 
